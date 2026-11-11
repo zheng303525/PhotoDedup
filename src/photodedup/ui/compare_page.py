@@ -16,7 +16,10 @@ from ..core.models import REL_LABEL
 from ..core.scanner import human_size
 from ..core.session import Session
 from . import theme
-from .widgets import AdvicePanel, ImagePane, InfoCard, build_diff, build_overlay, load_qimage
+from .widgets import (
+    ALIGN_TOLERANCE, AdvicePanel, ImagePane, InfoCard, build_diff, build_overlay,
+    load_qimage,
+)
 
 COMPOSITE_MAX = 1800
 
@@ -236,7 +239,12 @@ class ComparePage(QWidget):
         else:
             img, ratio = build_diff(a, b)
             self.left["pane"].set_image(img)
-            self.lbl_diff.setText(f"高亮处为差异（占画面 {ratio:.1f}%）")
+            text = f"高亮处为差异（占对比区域 {ratio:.1f}%）"
+            ar_a = a.width() / max(1, a.height())
+            ar_b = b.width() / max(1, b.height())
+            if abs(ar_a - ar_b) > ALIGN_TOLERANCE * max(ar_a, ar_b):
+                text += " · 两图宽高比不同，仅对比重叠区域（未重叠处已调暗）"
+            self.lbl_diff.setText(text)
 
     # ---------- 操作 ----------
     def delete_side(self, side: int) -> None:

@@ -108,6 +108,7 @@ class MainWindow(QMainWindow):
         self.sc_plus = add("+", lambda: self._zoom(1.25))
         self.sc_minus = add("-", lambda: self._zoom(0.8))
         self.sc_zero = add("0", self._reset_view)
+        self.sc_esc = add("Esc", self.finish)  # 提示条承诺了「Esc 结束」，此前没有绑定
 
     def _set_shortcuts_enabled(self, on: bool) -> None:
         for sc in self._shortcuts:

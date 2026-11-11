@@ -2,6 +2,22 @@
 
 from __future__ import annotations
 
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # UI 测试无头运行，须在导入 PySide6 前设置
+
+if os.name == "nt":
+    # 在 DSH 沙箱等受限环境下，带限制 mode（如 tempfile.mkdtemp 的 0o700）创建的
+    # 目录会丢失工作区授权条目，目录内一切写入被拒（实测：默认 mode 正常，
+    # mode=0o700 被拒）。测试进程统一用默认 mode 建临时目录；常规 Windows 环境
+    # 本就忽略 mode 参数，此补丁无副作用。
+    _real_mkdir = os.mkdir
+
+    def _sandbox_safe_mkdir(path, mode=0o777):
+        return _real_mkdir(path, 0o777)
+
+    os.mkdir = _sandbox_safe_mkdir
+
 import csv
 import hashlib
 import os

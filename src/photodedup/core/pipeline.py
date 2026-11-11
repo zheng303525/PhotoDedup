@@ -105,25 +105,87 @@ class ScanResult:
 
 
 class FingerprintCache:
-    """sqlite 指纹缓存：同一文件（大小+修改时间未变）二次扫描直接命中。"""
+    """sqlite 指纹缓存：同一文件（相对路径+大小+修改时间未变）二次扫描直接命中。
 
-    def __init__(self, db_path: Path | str) -> None:
+    键是「相对扫描根的路径」而不是绝对路径：整个照片库搬家/换盘符/根目录改名后，
+    缓存仍然命中——个人用户整理目录是高频操作，绝对路径键会让每次整理都白算一遍。
+    root 列记录该行最后由哪个库写入，清理失效条目时按库隔离，不误删其他库的缓存。
+    取舍：两个库若存在相对路径相同、大小与修改时间也相同的文件（同一份拷贝，
+    内容本就一致），会互相命中——与断点续扫缓存的 (路径,大小,mtime) 指纹同一风险级别。
+    """
+
+    def __init__(self, db_path: Path | str, root: Path | str | None = None) -> None:
         self.path = Path(db_path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._root_path = Path(root) if root is not None else None
+        self.root_key = os.path.normcase(str(self._root_path)) if root is not None else None
         self._lock = threading.Lock()
         self.conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS fp ("
-            "path TEXT PRIMARY KEY, size INTEGER, mtime REAL, data TEXT)"
+            "path TEXT PRIMARY KEY, root TEXT, size INTEGER, mtime REAL, data TEXT)"
         )
+        self.conn.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")
         self.conn.commit()
+        if self.root_key is not None:
+            self._migrate_legacy()
+        # root 列可能由上面的迁移补上，索引必须在迁移之后建
+        self.conn.execute("CREATE INDEX IF NOT EXISTS fp_root ON fp(root)")
+        self.conn.commit()
+
+    # ---------- 键 ----------
+    def key_for(self, path: Path) -> str:
+        return os.path.normcase(self._rel(path))
+
+    def _rel(self, path: Path) -> str:
+        if self._root_path is not None:
+            try:
+                return path.relative_to(self._root_path).as_posix()
+            except ValueError:
+                pass
+        return path.as_posix()
+
+    # ---------- 旧格式迁移（v1：绝对路径键、无 root 列） ----------
+    def _migrate_legacy(self) -> None:
+        with self._lock:
+            row = self.conn.execute("SELECT v FROM meta WHERE k = 'schema'").fetchone()
+            if row and row[0] == "2":
+                return
+            cols = {r[1] for r in self.conn.execute("PRAGMA table_info(fp)")}
+            if "root" not in cols:
+                self.conn.execute("ALTER TABLE fp ADD COLUMN root TEXT DEFAULT ''")
+            # v1 的键是绝对路径（Windows 路径不含 "|"）：同一根下的迁到新键，其余清理
+            rows = self.conn.execute(
+                "SELECT path, size, mtime FROM fp WHERE instr(path, '|') = 0"
+            ).fetchall()
+            root_nc = Path(os.path.normcase(str(self._root_path)))
+            updates, dead = [], []
+            for p, s, m in rows:
+                try:
+                    rel = Path(os.path.normcase(p)).relative_to(root_nc).as_posix()
+                except ValueError:
+                    dead.append((p,))
+                    continue
+                updates.append((os.path.normcase(rel), self.root_key, p))
+            if updates:
+                self.conn.executemany(
+                    "UPDATE fp SET path = ?, root = ? WHERE path = ?", updates)
+            if dead:
+                self.conn.executemany("DELETE FROM fp WHERE path = ?", dead)
+            self.conn.execute(
+                "INSERT OR REPLACE INTO meta (k, v) VALUES ('schema', '2')")
+            self.conn.execute(
+                "INSERT OR REPLACE INTO meta (k, v) VALUES ('last_root', ?)",
+                (self.root_key,),
+            )
+            self.conn.commit()
 
     def get(self, path: Path, size: int, mtime: float) -> dict | None:
         import json
 
         with self._lock:
             row = self.conn.execute(
-                "SELECT size, mtime, data FROM fp WHERE path = ?", (str(path),)
+                "SELECT size, mtime, data FROM fp WHERE path = ?", (self.key_for(path),)
             ).fetchone()
         if not row:
             return None
@@ -140,10 +202,39 @@ class FingerprintCache:
 
         with self._lock:
             self.conn.execute(
-                "INSERT OR REPLACE INTO fp (path, size, mtime, data) VALUES (?,?,?,?)",
-                (str(path), int(size), float(mtime), json.dumps(data, ensure_ascii=False)),
+                "INSERT OR REPLACE INTO fp (path, root, size, mtime, data) VALUES (?,?,?,?,?)",
+                (self.key_for(path), self.root_key, int(size), float(mtime),
+                 json.dumps(data, ensure_ascii=False)),
             )
             self.conn.commit()
+
+    def prune(self, keep_keys: set[str]) -> int:
+        """清理失效条目：只删本库（root 列）写入、且不在当前扫描里的行。
+
+        扫描结束（未取消）时调用：改名的文件、已删除的文件的旧键被清掉，
+        防止缓存无限增长。库搬家后键不变、root 列过时——先把路径仍在的行
+        认领回本库再清理，否则旧标签的行永远不在清理范围内，会永久残留。
+        其他库（相对路径不同）的行不受影响。
+        """
+        if self.root_key is None or not keep_keys:
+            return 0
+        with self._lock:
+            self.conn.execute("CREATE TEMP TABLE IF NOT EXISTS keep (k TEXT PRIMARY KEY)")
+            self.conn.execute("DELETE FROM keep")
+            self.conn.executemany(
+                "INSERT OR IGNORE INTO keep VALUES (?)", ((k,) for k in keep_keys))
+            self.conn.execute(
+                "UPDATE fp SET root = ? WHERE root IS NOT ? AND path IN (SELECT k FROM keep)",
+                (self.root_key, self.root_key),
+            )
+            cur = self.conn.execute(
+                "DELETE FROM fp WHERE root = ? AND path NOT IN (SELECT k FROM keep)",
+                (self.root_key,),
+            )
+            n = cur.rowcount
+            self.conn.execute("DROP TABLE IF EXISTS keep")
+            self.conn.commit()
+            return max(n, 0)
 
     def close(self) -> None:
         try:
@@ -189,7 +280,8 @@ class Pipeline:
                  progress: ProgressFn | None = None,
                  cancel: CancelFn | None = None) -> None:
         self.opt = options
-        self.cache = FingerprintCache(Path(cache_dir) / "fingerprints.sqlite")
+        self.cache = FingerprintCache(Path(cache_dir) / "fingerprints.sqlite",
+                                      root=Path(options.root))
         self.progress = progress
         self.cancel = cancel
         self._t0 = time.time()
@@ -437,6 +529,11 @@ class Pipeline:
         result.stats.groups = len(groups)
         result.stats.duplicated = sum(max(0, g.size - 1) for g in groups)
         result.stats.wasted_bytes = sum(reclaim(g) for g in groups)
+        if not self._cancelled():
+            # 清理失效缓存条目（改名/已删除文件的旧键）——按库隔离，只动本库的行
+            removed = self.cache.prune({self.cache.key_for(e.path) for e in entries})
+            if removed:
+                result.warnings.append(f"已清理 {removed} 条失效缓存")
         result.stats.elapsed = time.time() - self._t0
         result.stats.cancelled = self._cancelled()
         self._report("完成", 1, 1, f"{len(groups)} 组重复")

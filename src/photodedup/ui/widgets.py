@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QPoint, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QImageReader, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
@@ -49,44 +49,95 @@ def rgb_to_qimage(arr: np.ndarray) -> QImage:
     return QImage(buf, w, h, w * 3, QImage.Format.Format_RGB888).copy()
 
 
+ALIGN_TOLERANCE = 0.02  # 宽高比相对差 ≤2% 视为同比例
+
+
+def _align_pair(a: QImage, b: QImage) -> tuple[QImage, QRect]:
+    """把 B 与 A 对齐，返回 (B 的对齐版本, B 在 A 坐标系里的放置矩形)。
+
+    宽高比一致（±2%）：B 缩放到 A 的尺寸，覆盖全帧——同比例缩放，无变形。
+    宽高比不同（裁剪版）：B 按 1:1 居中放置，不再拉伸到 A 的尺寸——
+    旧版用 IgnoreAspectRatio 硬拉伸，裁剪版会全图错位、差异占比失真。
+    同尺度裁剪（裁剪后未缩放，最常见）在此对齐是精确的；缩放过的裁剪版
+    无法无特征对齐，差异只统计重叠区域，未重叠处调暗。
+    """
+    iw, ih = a.width(), a.height()
+    bw, bh = b.width(), b.height()
+    if iw <= 0 or ih <= 0 or bw <= 0 or bh <= 0:
+        scaled = b.scaled(a.size(), Qt.AspectRatioMode.IgnoreAspectRatio,
+                          Qt.TransformationMode.SmoothTransformation)
+        return scaled, QRect(0, 0, max(iw, 1), max(ih, 1))
+    ar_a, ar_b = iw / ih, bw / bh
+    if abs(ar_a - ar_b) <= ALIGN_TOLERANCE * max(ar_a, ar_b):
+        scaled = b.scaled(a.size(), Qt.AspectRatioMode.IgnoreAspectRatio,
+                          Qt.TransformationMode.SmoothTransformation)
+        return scaled, QRect(0, 0, iw, ih)
+    x = (iw - bw) // 2
+    y = (ih - bh) // 2
+    return b, QRect(x, y, bw, bh)
+
+
 def build_overlay(a: QImage, b: QImage, opacity: float = 0.5) -> QImage:
-    """把 B 以给定不透明度叠在 A 上，用来发现细微位移/改动。"""
-    size = a.size()
-    ca = a.convertToFormat(QImage.Format.Format_RGB888)
-    cb = b.convertToFormat(QImage.Format.Format_RGB888).scaled(
-        size, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
-    out = QImage(size, QImage.Format.Format_RGB888)
+    """把 B 以给定不透明度叠在 A 上，用来发现细微位移/改动。B 先等比对齐。"""
+    cb, rect = _align_pair(a, b)
+    out = QImage(a.size(), QImage.Format.Format_RGB888)
     out.fill(QColor(0, 0, 0))
     p = QPainter(out)
-    p.drawImage(0, 0, ca)
+    p.drawImage(0, 0, a.convertToFormat(QImage.Format.Format_RGB888))
     p.setOpacity(opacity)
-    p.drawImage(0, 0, cb)
+    p.drawImage(rect.topLeft(), cb)
     p.end()
     return out
 
 
 def build_diff(a: QImage, b: QImage, gain: float = 5.0) -> tuple[QImage, float]:
-    """差异高亮：把两图的绝对差放大后画成热力图，返回 (图, 差异像素占比)。"""
-    size = a.size()
+    """差异高亮：把两图的绝对差放大后画成热力图，返回 (图, 差异像素占比)。
+
+    占比按「对比区域」计算：宽高比一致时为全帧，裁剪版为重叠区域；
+    未重叠处画成暗边、不参与占比。
+    """
+    cb, rect = _align_pair(a, b)
     ca = a.convertToFormat(QImage.Format.Format_RGB888)
-    cb = b.convertToFormat(QImage.Format.Format_RGB888).scaled(
-        size, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
-
     aa = qimage_to_rgb(ca).astype(np.int16)
-    bb = qimage_to_rgb(cb).astype(np.int16)
-    d = np.abs(aa - bb).max(axis=2).astype(np.float32)
+    ih, iw = aa.shape[:2]
 
-    # 只保留结构差异，忽略编码噪声
+    # B 的放置区域与画面的交集
+    x0, y0 = max(0, rect.left()), max(0, rect.top())
+    x1, y1 = min(iw, rect.left() + rect.width()), min(ih, rect.top() + rect.height())
+    if x1 - x0 <= 0 or y1 - y0 <= 0:
+        # 退化（极端尺寸差完全错开）：退回整帧缩放对比，避免输出无意义的全暗图
+        cb = cb.scaled(a.size(), Qt.AspectRatioMode.IgnoreAspectRatio,
+                       Qt.TransformationMode.SmoothTransformation)
+        rect = QRect(0, 0, iw, ih)
+        x0, y0, x1, y1 = 0, 0, iw, ih
+
+    bb_full = qimage_to_rgb(cb.convertToFormat(QImage.Format.Format_RGB888)).astype(np.int16)
+    bb = np.zeros_like(aa)
+    sy0 = max(0, y0 - rect.top())
+    sx0 = max(0, x0 - rect.left())
+    sy1 = min(bb_full.shape[0], sy0 + (y1 - y0))
+    sx1 = min(bb_full.shape[1], sx0 + (x1 - x0))
+    bb[y0:y0 + (sy1 - sy0), x0:x0 + (sx1 - sx0)] = bb_full[sy0:sy1, sx0:sx1]
+
+    d = np.abs(aa - bb).max(axis=2).astype(np.float32)
+    compared = np.zeros((ih, iw), dtype=bool)
+    compared[y0:y1, x0:x1] = True
+
+    # 只保留结构差异，忽略编码噪声；未重叠处不画热区
     hot = np.clip((d - 12.0) * gain, 0, 255).astype(np.uint8)
-    ratio = float((d > 12).mean()) * 100.0
+    hot[~compared] = 0
+    ratio = float((d[compared] > 12).mean()) * 100.0
 
     base = (aa * 0.25 + 40).astype(np.uint8)
-    out = np.dstack([base, base, base])
+    dim = (base[~compared].astype(np.float32) * 0.35).astype(np.uint8)
+    base[~compared] = dim
     mask = hot > 0
-    out[..., 0] = np.where(mask, 255, out[..., 0])
-    out[..., 1] = np.where(mask, np.clip(120 - hot, 0, 255), out[..., 1])
-    out[..., 2] = np.where(mask, np.clip(120 - hot, 0, 255), out[..., 2])
-    return rgb_to_qimage(out), ratio
+    # 120-hot 必须先升 int16：uint8 直接减会下溢（120-255 → 121），热区该是纯红会变粉
+    cool = np.clip(120 - hot.astype(np.int16), 0, 255).astype(np.uint8)
+    base[..., 0] = np.where(mask, 255, base[..., 0])
+    base[..., 1] = np.where(mask, cool, base[..., 1])
+    base[..., 2] = np.where(mask, cool, base[..., 2])
+    return rgb_to_qimage(base), ratio
 
 
 class ImagePane(QWidget):

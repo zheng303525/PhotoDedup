@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import os
 import shutil
 from pathlib import Path
@@ -109,15 +110,27 @@ def build_samples(root: Path) -> dict[str, Path]:
     save("14_other.jpg", other, 90)
 
     # 同版式不同内容的手机截图：布局完全一样，文字不同 —— 真实库里最容易误判的一类
+    #
+    # 注意：这两张图必须**不依赖字体**就有差异。CI 上没有 arial/segoeui/msyh，
+    # 只会拿到 load_default() 的位图小字，若差异全靠文字渲染，图会退化成几乎相同，
+    # 测试就变成「看机器装的什么字体」。所以每行的色块颜色由行文字哈希决定 ——
+    # 布局一致、多处小色块不同，正好对应真实截图「同版式不同内容」的差异形态。
     from PIL import ImageFont
 
     def _font(size: int):
-        for name in ("arial.ttf", "segoeui.ttf", "msyh.ttc"):
+        for name in ("arial.ttf", "segoeui.ttf", "msyh.ttc", "DejaVuSans.ttf"):
             try:
                 return ImageFont.truetype(name, size)
             except Exception:
                 continue
-        return ImageFont.load_default()
+        try:
+            return ImageFont.load_default(size=size)  # Pillow >= 10.1 支持可缩放默认字体
+        except Exception:
+            return ImageFont.load_default()
+
+    def _badge(ln: str) -> tuple[int, int, int]:
+        h = int(hashlib.md5(ln.encode("utf-8")).hexdigest()[:6], 16)
+        return (50 + (h & 0x7F), 60 + ((h >> 8) & 0x7F), 90 + ((h >> 16) & 0x5F))
 
     def screen(rows: list[str], accent: tuple[int, int, int]) -> Image.Image:
         im = Image.new("RGB", (540, 960), (250, 250, 252))
@@ -128,7 +141,7 @@ def build_samples(root: Path) -> dict[str, Path]:
         d.text((20, 70), rows[0], font=_font(30), fill=(255, 255, 255))
         y = 175
         for ln in rows[1:]:
-            d.rectangle([20, y + 6, 60, y + 46], fill=(90, 140, 240))
+            d.rectangle([20, y + 6, 60, y + 46], fill=_badge(ln))
             d.text((76, y + 8), ln, font=_font(26), fill=(30, 30, 30))
             d.text((470, y + 12), ">", font=_font(24), fill=(150, 150, 150))
             d.line([20, y + 62, 520, y + 62], fill=(222, 222, 226))

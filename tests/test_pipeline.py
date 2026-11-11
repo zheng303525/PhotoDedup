@@ -6,7 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from photodedup.core.models import REL_BURST, REL_EXACT, REL_NEAR, REL_SAME_PIXEL
+from photodedup.core.models import (
+    REL_BURST, REL_EXACT, REL_NEAR, REL_SAME_PIXEL, REL_WEAK,
+)
 from photodedup.core.pipeline import Pipeline, ScanOptions
 from photodedup.core.recommend import recommend
 
@@ -80,8 +82,69 @@ def test_burst_pair_shows_as_low_confidence_group(scan):
 
 
 def test_flat_and_unrelated_not_grouped(scan):
-    for name in ("12_wall_a.jpg", "13_wall_b.jpg", "14_other.jpg"):
+    """不同颜色的墙与无关图不该被并组（12_wall_a 有副本，由颜色门测试覆盖）。"""
+    for name in ("13_wall_b.jpg", "14_other.jpg"):
         assert _group_of(scan, _by_name(scan, name)) is None, f"{name} 被误判成重复"
+
+
+def test_flat_duplicate_grouped_by_color_gate(scan):
+    """修复：纯色图的重压缩副本（pHash 全同 + ORB 无特征）由颜色差校验层并组。
+
+    这是此前静默漏检的一类：纯色图的 pHash 全同（DC 主导）、ORB 提不到特征，
+    唯一可用的证据是 8×8 颜色分布（标定：同一张重压缩差 13.1，不同墙 2688）。
+    """
+    a = _by_name(scan, "12_wall_a.jpg")
+    c = _by_name(scan, "17_wall_a_copy.jpg")
+    g = _group_of(scan, c)
+    assert g is not None, "纯色重压缩副本应被颜色校验层并组"
+    assert a in g.members, "应与原图同组"
+    pv = scan.edges.get((min(a, c), max(a, c)))
+    assert pv is not None and pv.accepted, f"颜色门并组的边应是 accepted，实际 {pv}"
+    assert "颜色" in pv.note
+
+
+def test_flat_different_colors_stay_low_confidence(scan):
+    """两面不同的墙：颜色差 2688 超过候选阈值 256，算法正确地不作任何判定——
+
+    它们本来就不是重复：既不并组、也不进待查（颜色门的候选阈值与判定阈值
+    一致，能通过门的一定是候选，通不过的连候选都不是）。
+    """
+    a = _by_name(scan, "12_wall_a.jpg")
+    b = _by_name(scan, "13_wall_b.jpg")
+    assert _group_of(scan, b) is None, "两面不同的墙不该被并组"
+    key = (min(a, b), max(a, b))
+    assert key not in scan.edges, "不同颜色的纯色对不该被评估（颜色差超阈值）"
+    assert all(not {a, b} <= set(g.members) for g in scan.low_confidence_groups), \
+        "不同颜色的纯色对不该出现在低置信组里"
+
+
+class TestColorGateWithRealNumbers:
+    """用真实样本标定的颜色差数值做回归（同一张重压缩 13.1 / 不同墙 2688.4）。"""
+
+    @staticmethod
+    def _geo(flat: bool, diff: float) -> dict:
+        return {"inliers": 0, "ratio": 0.0, "matches": 0,
+                "low_texture": True, "note": "",
+                "color": {"flat": flat, "diff": diff}}
+
+    def test_flat_same_colors_near(self):
+        from photodedup.core.verify import classify
+
+        rel, note = classify(0, True, self._geo(True, 13.1), None)
+        assert rel == REL_NEAR
+        assert "颜色" in note
+
+    def test_flat_different_colors_weak(self):
+        from photodedup.core.verify import classify
+
+        rel, _ = classify(0, True, self._geo(True, 2688.4), None)
+        assert rel == REL_WEAK, "两面不同的墙不该被颜色门并组"
+
+    def test_textured_pair_not_color_gated(self):
+        from photodedup.core.verify import classify
+
+        rel, _ = classify(0, True, self._geo(False, 13.1), None)
+        assert rel == REL_WEAK, "有一方有纹理时颜色门不应放行，交给几何层/待查"
 
 
 def test_same_layout_different_content_not_grouped(scan):

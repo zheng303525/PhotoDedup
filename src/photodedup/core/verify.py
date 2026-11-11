@@ -26,6 +26,41 @@ DIFF_THR = 0.6          # RGB 三通道 z 分数最大差超过它的像素算�
 MIN_GOOD = 8            # 比率检验后至少需要的匹配数
 RATIO_TEST = 0.75
 
+# 纯色/无纹理对的颜色校验（photodedupe 的思路；标定见 tests/test_pipeline.py）：
+# 8×8 块均值把噪声平均掉、只留颜色分布——同一张的重压缩副本签名差 ≈ 0-10，
+# 两张不同颜色的图 ≈ 900+，中间隔着巨大安全边际。纯色图（纯色墙/纯色截图）的
+# pHash 全同（DC 主导）、ORB 提不到特征，颜色差是唯一可用的证据。
+FLAT_STD_DEV = 3.0      # 8×8 颜色签名的标准差低于它视为「纯色」
+COLOR_DIFF_THR = 256.0  # 8×8 RGB 颜色差之和的上限
+
+
+def _color_signature(x: np.ndarray) -> np.ndarray | None:
+    """整图缩到 8×8 的颜色签名（numpy 实现，不依赖 cv2）。
+
+    每个值是约 1/64 画面的块均值：噪声被平均掉、只留颜色分布——
+    纯色图的签名≈纯色本身，同一张的重压缩副本签名差趋近 0。
+    """
+    h, w = x.shape[:2]
+    h8, w8 = (h // 8) * 8, (w // 8) * 8
+    if h8 == 0 or w8 == 0:
+        return None
+    return x[:h8, :w8].reshape(8, h8 // 8, 8, w8 // 8, x.shape[2]).mean(axis=(1, 3))
+
+
+def color_gate(ra: np.ndarray, rb: np.ndarray) -> dict[str, Any]:
+    """纯色/无纹理对的颜色校验。
+
+    返回 {"flat": 双方都是纯色, "diff": 8×8 RGB 颜色差之和}。
+    双方都得是纯色（有一方有纹理，8×8 签名就太粗，交给几何层/待查）。
+    """
+    sa, sb = _color_signature(ra), _color_signature(rb)
+    if sa is None or sb is None:
+        return {"flat": False, "diff": None}
+    std = float(max(sa.std(), sb.std()))
+    flat = std <= FLAT_STD_DEV
+    diff = float(np.abs(sa.astype(np.float32) - sb.astype(np.float32)).sum())
+    return {"flat": flat, "diff": round(diff, 1)}
+
 # 判定阈值（2026-11 用正负样本标定过，见 docs/thresholds.md）
 DEF_MIN_INLIERS = 12
 DEF_MIN_RATIO = 0.30
@@ -48,11 +83,24 @@ def _z_in(a: np.ndarray, mask: np.ndarray) -> np.ndarray:
     return (a - mu) / sd
 
 
+def flat_color_signature(rgb: np.ndarray) -> list[int] | None:
+    """纯色图的 8×8 颜色签名（192 个 0-255 整数）；非纯色返回 None。
+
+    纯色图的 pHash 对噪声敏感（AC 位不稳定，实测两张重压缩副本差 15-18），
+    颜色签名是候选生成的唯一可用证据。签名只给纯色图存，缓存几乎不膨胀。
+    """
+    sig = _color_signature(rgb)
+    if sig is None or float(sig.std()) > FLAT_STD_DEV:
+        return None
+    return [int(v) for v in np.clip(sig, 0, 255).reshape(-1)]
+
+
 def orb_match(ra: np.ndarray, rb: np.ndarray) -> dict[str, Any]:
-    """ORB 特征匹配 + RANSAC 求单应矩阵。"""
+    """ORB 特征匹配 + RANSAC 求单应矩阵。低纹理时附带颜色校验证据。"""
     if cv2 is None:
         return {"matches": 0, "inliers": 0, "ratio": 0.0, "H": None,
-                "low_texture": True, "note": "未安装 opencv"}
+                "low_texture": True, "note": "未安装 opencv",
+                "color": color_gate(ra, rb)}
     ga = cv2.cvtColor(ra, cv2.COLOR_RGB2GRAY)
     gb = cv2.cvtColor(rb, cv2.COLOR_RGB2GRAY)
     orb = cv2.ORB_create(nfeatures=2000)
@@ -60,13 +108,15 @@ def orb_match(ra: np.ndarray, rb: np.ndarray) -> dict[str, Any]:
     kb, db = orb.detectAndCompute(gb, None)
     if da is None or db is None or len(ka) < MIN_GOOD or len(kb) < MIN_GOOD:
         return {"matches": 0, "inliers": 0, "ratio": 0.0, "H": None,
-                "low_texture": True, "note": "纹理太少，特征点不足"}
+                "low_texture": True, "note": "纹理太少，特征点不足",
+                "color": color_gate(ra, rb)}
 
     knn = cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(da, db, k=2)
     good = [m for m, n in knn if m.distance < RATIO_TEST * n.distance]
     if len(good) < MIN_GOOD:
         return {"matches": len(good), "inliers": 0, "ratio": 0.0, "H": None,
-                "low_texture": True, "note": "好匹配不足"}
+                "low_texture": True, "note": "好匹配不足",
+                "color": color_gate(ra, rb)}
 
     src = np.float32([ka[m.queryIdx].pt for m in good])
     dst = np.float32([kb[m.trainIdx].pt for m in good])
@@ -138,6 +188,10 @@ def classify(pd: int, same_dims: bool, geo: dict, region: dict | None,
 
     aligned = (geo["inliers"] >= min_inliers) and (geo["ratio"] >= min_ratio)
     if geo.get("low_texture"):
+        cc = geo.get("color") or {}
+        if cc.get("flat") and cc.get("diff") is not None and cc["diff"] <= COLOR_DIFF_THR:
+            return REL_NEAR, (f"纯色图颜色分布一致（8×8 颜色差 {cc['diff']:.0f}），"
+                              "几何层无法验证但颜色证据通过")
         return REL_WEAK, "纹理太少，几何层无法验证"
 
     if aligned and region and not region.get("invalid"):

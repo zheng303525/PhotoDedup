@@ -114,6 +114,9 @@ def build_samples(root: Path) -> dict[str, Path]:
     # 纯色墙
     save("12_wall_a.jpg", _noisy(Image.new("RGB", (W, H), (240, 238, 234)), 3), 90)
     save("13_wall_b.jpg", _noisy(Image.new("RGB", (W, H), (226, 224, 220)), 4), 90)
+    # 同一张纯色墙的重压缩副本：纯色图 pHash 全同（DC 主导）、ORB 提不到特征，
+    # 颜色差校验层（verify.color_gate，标定差 13.1 vs 2688）是唯一能并组它的证据
+    save("17_wall_a_copy.jpg", _noisy(Image.new("RGB", (W, H), (240, 238, 234)), 3), 85)
 
     # 完全无关
     other = Image.fromarray(np.dstack([(yy * 0.4) % 256, ((xx * 2 + yy) * 0.2) % 256,

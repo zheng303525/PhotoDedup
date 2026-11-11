@@ -54,6 +54,7 @@ class ImageInfo:
     has_icc: bool = False
     exif_score: int = 0
     error: str = ""
+    color_sig: list[int] | None = None  # 纯色图的 8×8 颜色签名（192 个 0-255 整数）；非纯色为 None
 
     @property
     def pixels(self) -> int:
@@ -100,6 +101,7 @@ class ImageInfo:
             "has_icc": self.has_icc,
             "exif_score": self.exif_score,
             "error": self.error,
+            "color_sig": self.color_sig,
         }
 
     def load_cache(self, d: dict[str, Any]) -> None:

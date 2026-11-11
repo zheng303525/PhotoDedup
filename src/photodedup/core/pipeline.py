@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+import numpy as np
+
 from . import scanner
 from .grouping import candidate_pairs, collect_groups, unique_pairs
 from .hashing import fingerprints, hamming, md5_file
@@ -29,8 +31,8 @@ from .models import (
     REL_BURST, REL_EXACT, REL_NEAR, REL_SAME_PIXEL, REL_WEAK,
 )
 from .verify import (
-    DEF_MAX_BLOCK, DEF_MAX_BLOCKS, DEF_MAX_DIFF, DEF_MAX_FILL,
-    DEF_MIN_INLIERS, DEF_MIN_RATIO, evaluate_pair,
+    COLOR_DIFF_THR, DEF_MAX_BLOCK, DEF_MAX_BLOCKS, DEF_MAX_DIFF, DEF_MAX_FILL,
+    DEF_MIN_INLIERS, DEF_MIN_RATIO, evaluate_pair, flat_color_signature,
 )
 
 try:
@@ -64,6 +66,17 @@ def _limit_pairs(pairs: list[tuple[int, int, int]], max_links: int) -> list[tupl
         degree[pa] = degree.get(pa, 0) + 1
         degree[pb] = degree.get(pb, 0) + 1
     return keep
+
+
+def _make_pv(res: dict, pd: int) -> PairVerdict:
+    """把 evaluate_pair 的返回翻译成 PairVerdict（几何层与颜色层共用）。"""
+    return PairVerdict(
+        a=res["a"], b=res["b"], rel=res["rel"], pd=pd, dd=0,
+        inliers=res["inliers"], ratio=res["ratio"],
+        matches=res["matches"], diff_ratio=res["diff_ratio"],
+        max_block=res["max_block"], fill=res["fill"],
+        blocks=res.get("blocks", 0), note=res["note"],
+    )
 
 
 @dataclass
@@ -269,6 +282,8 @@ def _compute_info(entry: scanner.FileEntry, index: int, with_dihedral: bool,
         info.phash = fp["phash"]
         info.dhash = fp["dhash"]
         info.pvars = fp["pvars"]
+        # 纯色图存 8×8 颜色签名：pHash 的 AC 位对噪声敏感，颜色是候选生成的唯一证据
+        info.color_sig = flat_color_signature(rgb)
     except Exception as e:  # 损坏文件、缺解码器
         info.error = f"{type(e).__name__}: {e}"[:140]
     return info
@@ -420,6 +435,26 @@ class Pipeline:
         zero_pairs = _limit_pairs([(a, b, 0) for a, b in zero_pairs], opt.max_links)
         zero_pairs = [(a, b) for a, b, _ in zero_pairs]
 
+        # ---------- 纯色图颜色候选 ----------
+        # pHash 的 AC 位对噪声敏感：两张纯色重压缩副本实测差 15-18，超阈值进不了候选，
+        # 颜色签名（指纹阶段算好、只给纯色图存）是唯一可用证据。平坦图很少，两两比较可接受。
+        color_pairs: list[tuple[int, int, int]] = []
+        flat_files = [f for f in alive if f.color_sig]
+        if len(flat_files) > 5000:
+            result.warnings.append(f"纯色图过多（{len(flat_files)}），跳过颜色候选生成")
+        elif len(flat_files) >= 2 and opt.detect_near:
+            self._report("生成候选", 0, 1, f"纯色图 {len(flat_files)} 张")
+            sigs = {f.index: np.array(f.color_sig, dtype=np.float32).reshape(8, 8, 3)
+                    for f in flat_files}
+            for i in range(len(flat_files)):
+                fi = flat_files[i]
+                for j in range(i + 1, len(flat_files)):
+                    fj = flat_files[j]
+                    if float(np.abs(sigs[fi.index] - sigs[fj.index]).sum()) <= COLOR_DIFF_THR:
+                        pa, pb = idx_to_pos[fi.index], idx_to_pos[fj.index]
+                        d = min(hamming(x, y) for x in variants[pa] for y in variants[pb])
+                        color_pairs.append((pa, pb, d))
+
         # ---------- 阶段 4：全尺寸解码比像素（定论层） ----------
         same_pixel_pairs: list[tuple[int, int]] = []
         if opt.detect_same_pixel and zero_pairs:
@@ -494,19 +529,56 @@ class Pipeline:
                     if not res:
                         continue
                     it = futs[fut]
-                    pd = it[2]
-                    fa, fb = alive[it[0]], alive[it[1]]
-                    pv = PairVerdict(
-                        a=res["a"], b=res["b"], rel=res["rel"], pd=pd, dd=0,
-                        inliers=res["inliers"], ratio=res["ratio"],
-                        matches=res["matches"], diff_ratio=res["diff_ratio"],
-                        max_block=res["max_block"], fill=res["fill"],
-                        blocks=res.get("blocks", 0), note=res["note"],
-                    )
+                    pv = _make_pv(res, it[2])
                     edges[(min(pv.a, pv.b), max(pv.a, pv.b))] = pv
+                    fa, fb = alive[it[0]], alive[it[1]]
                     if n % 10 == 0 or n == total3:
                         self._report("几何复核", n, total3,
                                      f"{fa.name} ↔ {fb.name}")
+
+        # ---------- 阶段 5b：纯色图颜色校验（不依赖 ORB，不受 use_orb 门控） ----------
+        # 纯色图的 ORB 必然失败（提不到特征），evaluate_pair 里颜色门接力判定；
+        # 候选双方都是纯色（color_sig 只给纯色图存），ORB 快速失败无浪费。
+        if opt.detect_near and color_pairs:
+            todo4 = [(pa, pb, d) for pa, pb, d in color_pairs
+                     if (min(alive[pa].index, alive[pb].index),
+                         max(alive[pa].index, alive[pb].index)) not in edges]
+            if todo4:
+                total4 = max(len(todo4), 1)
+                self._report("颜色校验", 0, total4, f"{len(todo4)} 对纯色候选")
+
+                def verify_color(item: tuple[int, int, int]) -> dict | None:
+                    pa, pb, d = item
+                    fa, fb = alive[pa], alive[pb]
+                    try:
+                        return {"a": fa.index, "b": fb.index,
+                                **evaluate_pair(fa.path, fb.path, d,
+                                                fa.width == fb.width and fa.height == fb.height,
+                                                min_inliers=opt.min_inliers,
+                                                min_ratio=opt.min_ratio,
+                                                max_block=opt.max_block,
+                                                max_diff=opt.max_diff,
+                                                max_fill=opt.max_fill,
+                                                max_blocks=opt.max_blocks)}
+                    except Exception:
+                        return None
+
+                workers = max(1, min(4, opt.worker_count() // 2))
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futs = {pool.submit(verify_color, it): it for it in todo4}
+                    for fut in as_completed(futs):
+                        if self._cancelled():
+                            for f in futs:
+                                f.cancel()
+                            break
+                        res = fut.result()
+                        if not res:
+                            continue
+                        it = futs[fut]
+                        pv = _make_pv(res, it[2])
+                        edges[(min(pv.a, pv.b), max(pv.a, pv.b))] = pv
+                        if len(futs) % 5 == 0:
+                            self._report("颜色校验", len(futs), total4, "")
 
         # ---------- 阶段 6：聚组 ----------
         self._report("整理分组", 0, 1, "")

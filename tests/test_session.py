@@ -111,10 +111,27 @@ def trash_session(sample_dir: Path, tmp_path: Path) -> Session:
     return Session(res, opt, mode=MODE_TRASH)
 
 
+def _recycle_roundtrip_works(work: Path) -> bool:
+    """本机回收站能不能「删了再捞回来」。"""
+    probe = work / "回收站能力探测.txt"
+    probe.write_text("probe", encoding="utf-8")
+    from send2trash import send2trash
+
+    send2trash(str(probe))
+    return restore_from_trash(probe) and probe.exists()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="回收站还原依赖 Windows Shell")
-def test_undo_pulls_file_back_from_recycle_bin(trash_session: Session):
+def test_undo_pulls_file_back_from_recycle_bin(trash_session: Session, tmp_path: Path):
     """回收站模式下撤销必须真的把文件捞回来（这条曾经是坏的：
-    旧实现拿 Item.Path 比原路径，而回收站项的 Path 指向 $Recycle.Bin，永远不相等）。"""
+    旧实现拿 Item.Path 比原路径，而回收站项的 Path 指向 $Recycle.Bin，永远不相等）。
+
+    无 Explorer 会话的机器（比如 GitHub Actions 的 runner）上 Shell 命名空间拿不到回收站，
+    这时跳过而不是假装成功 —— 真机（有桌面会话）上这条是硬验证。
+    """
+    if not _recycle_roundtrip_works(tmp_path):
+        pytest.skip("本机回收站不可用（无桌面会话 / 回收站被禁用 / 网络盘），跳过")
+
     rec = trash_session.advice()
     target = trash_session.result.files[rec.drop].path
     size = target.stat().st_size

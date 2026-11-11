@@ -157,7 +157,8 @@ The default threshold of 8 is a starting point:
 
 Output: `dist\图片去重工坊.exe` plus an ASCII-named copy `dist\PhotoDedup-<version>-win64.exe` for releases.
 The selftest deletes a temporary file, pulls it back from the Recycle Bin and verifies the content, so the shipped
-binary proves that *delete → undo* works on your machine (`--selftest` can also be run standalone).
+binary proves that *delete → undo* works on your machine. On machines without a desktop session (CI runners) that
+step degrades to a warning; `--selftest` can also be run standalone.
 
 ## Layout
 

@@ -249,7 +249,11 @@ class Session:
                 from send2trash import send2trash
                 send2trash(str(info.path))
             except Exception as e:
-                raise DeleteError(f"移入回收站失败：{e}") from e
+                raise DeleteError(
+                    f"移入回收站失败：{e}\n"
+                    "网络盘、U 盘或回收站被关闭的分区上没有回收站。"
+                    "可以回开始页把删除方式换成「移到待删文件夹」，那样任何位置都能删且可撤销。"
+                ) from e
         return DeleteRecord(path=info.path, size=info.size, mtime=info.mtime,
                             staged=staging, mode=self.mode, group_id=gid)
 

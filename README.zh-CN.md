@@ -162,7 +162,7 @@ pHash 可能只差 8 位、ORB 内点率能到 0.99，但它们是两张不同�
 产物：`dist\图片去重工坊.exe`，同时复制一份 ASCII 文件名的 `dist\PhotoDedup-<版本>-win64.exe` 用于发布
 （GitHub Release 里中文资产名会被落成 `default.exe`）。
 自检会真删一张临时图再把它从回收站捞回来，确认打包产物里「删除 → 撤销」这条路是通的
-（`--selftest` 也可以单独跑）。
+（无桌面会话的机器，例如 CI runner，这一步降级为 WARN；`--selftest` 也可以单独跑）。
 
 ## 目录结构
 

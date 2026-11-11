@@ -29,8 +29,8 @@ PhotoDedup does three things:
 
 ### Prebuilt binary (Windows, no Python needed)
 
-Download `图片去重工坊.exe` from [Releases](../../releases/latest) and run it. Single file, ~103 MB, no installer.
-First launch unpacks to a temp folder (2–4 s).
+Download `PhotoDedup-1.0.0-win64.exe` from [Releases](../../releases/latest) and run it. Single file, ~103 MB,
+no installer. First launch unpacks to a temp folder (2–4 s).
 
 ### From source
 
@@ -155,9 +155,9 @@ The default threshold of 8 is a starting point:
 .venv\Scripts\python scripts\build.py      # package + rename + selftest
 ```
 
-Output: `dist\图片去重工坊.exe`. The selftest deletes a temporary file, pulls it back from the Recycle Bin and
-verifies the content, so the shipped binary proves that *delete → undo* works on your machine
-(`--selftest` can also be run standalone).
+Output: `dist\图片去重工坊.exe` plus an ASCII-named copy `dist\PhotoDedup-<version>-win64.exe` for releases.
+The selftest deletes a temporary file, pulls it back from the Recycle Bin and verifies the content, so the shipped
+binary proves that *delete → undo* works on your machine (`--selftest` can also be run standalone).
 
 ## Layout
 
@@ -200,7 +200,7 @@ docs/                   algorithm notes and screenshots
 | Folder | Files | Time | Result |
 |---|---|---|---|
 | Synthetic suite (9 variant types + 8 negative cases) | 17 | 1.0 s | 1 group of 9; negatives all clean |
-| `D:\OneDrive\Pictures\截图` (real phone screenshots) | 6,629 | 63 s (6,625 cache hits) | 18 groups / 22 duplicates, every pair verified by eye |
+| A real screenshot folder (phone captures, 2018–2025) | 6,629 | 63 s (6,625 cache hits) | 18 groups / 22 duplicates, every pair verified by eye |
 
 ## License
 

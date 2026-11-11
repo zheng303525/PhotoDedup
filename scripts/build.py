@@ -34,6 +34,14 @@ def main() -> int:
     shutil.move(str(RAW), str(FINAL))
     print(f"产物：{FINAL}（{FINAL.stat().st_size / 1048576:.0f} MB）")
 
+    # 发布用的 ASCII 副本：GitHub Release 里中文资产名会被落成 default.exe
+    sys.path.insert(0, str(ROOT / "src"))
+    from photodedup import __version__  # noqa: E402
+
+    release = ROOT / "dist" / f"PhotoDedup-{__version__}-win64.exe"
+    shutil.copy2(FINAL, release)
+    print(f"发布副本：{release}")
+
     print("自检中……")
     out = ROOT / "_selftest.txt"
     cp = subprocess.run([str(FINAL), "--selftest", "--out", str(out)])

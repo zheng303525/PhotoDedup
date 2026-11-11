@@ -37,6 +37,44 @@ MODE_STAGING = "staging"
 MODE_TRASH = "trash"
 
 
+def _progress_path(root: Path, progress_dir: Path | None = None) -> Path:
+    """某个扫描根的审阅进度文件位置（按根路径哈希定位）。"""
+    import hashlib
+
+    base = Path(progress_dir) if progress_dir else (
+        Path(os.environ.get("LOCALAPPDATA") or str(Path.home())) / "PhotoDedup" / "cache")
+    base.mkdir(parents=True, exist_ok=True)
+    key = hashlib.md5(os.path.normcase(str(root)).encode("utf-8")).hexdigest()[:12]
+    return base / f"review-{key}.json"
+
+
+def saved_progress(root: Path, progress_dir: Path | None = None) -> dict | None:
+    """读某个扫描根的未完成审阅进度；没有返回 None。
+
+    进度文件在审阅结束（出报告）时清除，所以文件存在 = 上次审阅没走完（意外关闭）。
+    """
+    p = _progress_path(root, progress_dir)
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(data, dict) or not data.get("decisions"):
+        return None
+    if os.path.normcase(str(data.get("root", ""))) != os.path.normcase(str(root)):
+        return None
+    return data
+
+
+def clear_saved_progress(root: Path, progress_dir: Path | None = None) -> None:
+    """审阅结束（出报告）后清掉进度文件。"""
+    try:
+        _progress_path(root, progress_dir).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 class DeleteError(RuntimeError):
     """删除/撤销失败，带上人能看懂的原因。"""
 
@@ -81,7 +119,8 @@ class Session:
     """一次「浏览并清理」的全过程。"""
 
     def __init__(self, result: ScanResult, options: ScanOptions,
-                 mode: str = MODE_TRASH, staging_root: Path | None = None) -> None:
+                 mode: str = MODE_TRASH, staging_root: Path | None = None,
+                 progress_dir: Path | None = None) -> None:
         self.result = result
         self.opt = options
         self.mode = mode
@@ -89,6 +128,7 @@ class Session:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         self.staging_root = Path(staging_root) if staging_root else (
             self.root / f"{STAGING_PREFIX}_{stamp}")
+        self.progress_dir = Path(progress_dir) if progress_dir else None
 
         self.deleted: list[DeleteRecord] = []
         self.kept_both: list[tuple[int, int]] = []
@@ -201,6 +241,7 @@ class Session:
             st.champion = st.alive[0]
         if len(st.alive) <= 1 or self._challenger_of(st) is None:
             st.done = True
+        self._save_progress()
         return rec
 
     def keep_both(self) -> None:
@@ -217,6 +258,7 @@ class Session:
         self._processed += 1
         if self._challenger_of(st) is None:
             st.done = True
+        self._save_progress()
 
     def skip_group(self) -> None:
         """整组跳过，不再询问。"""
@@ -225,6 +267,7 @@ class Session:
             return
         self.groups[bout.group_id].done = True
         self._decisions.append({"action": "skip_group", "group": bout.group_id})
+        self._save_progress()
 
     def mark_group_kept(self, gid: int) -> None:
         self.groups[gid].done = True
@@ -296,7 +339,71 @@ class Session:
                     st.alive.sort(key=lambda m: st.ranked.index(m) if m in st.ranked else 999)
                 st.done = False
         self._processed = max(0, self._processed - 1)
+        self._save_progress()
         return rec
+
+    # ---------------- 进度持久化 ----------------
+    def _save_progress(self) -> None:
+        """审阅进度存盘（每次决定后调用）：意外关闭后重扫同一目录可续。"""
+        if not self.progress_dir:
+            return
+        try:
+            skipped = sorted({d["group"] for d in self._decisions
+                              if d["action"] == "skip_group"})
+            data = {
+                "app": APP_NAME, "version": __version__,
+                "root": str(self.root), "mode": self.mode,
+                "when": datetime.now().isoformat(timespec="seconds"),
+                "processed": self._processed, "planned": self._planned,
+                "decisions": (
+                    [{"action": "delete", "path": str(r.path), "mode": r.mode}
+                     for r in self.deleted]
+                    + [{"action": "keep_both",
+                        "a": str(self.result.files[a].path),
+                        "b": str(self.result.files[b].path)}
+                       for a, b in self.kept_both]
+                    + [{"action": "skip_group",
+                        "paths": [str(self.result.files[m].path)
+                                  for m in self.result.groups[gid].members]}
+                       for gid in skipped if 0 <= gid < len(self.result.groups)]
+                ),
+            }
+            _progress_path(self.root, self.progress_dir).write_text(
+                json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass  # 进度存盘失败不影响审阅
+
+    def apply_resume(self, resume: dict) -> int:
+        """把上次未完成会话的决定应用回来，返回应用的决定数。
+
+        删除过的文件不在这次扫描结果里（已移出），状态自然对齐；
+        需要回放的只有「都留」和「整组跳过」。
+        """
+        by_path = {info.path: info.index for info in self.result.files}
+        applied = 0
+        for dec in resume.get("decisions", []):
+            action = dec.get("action")
+            if action == "keep_both":
+                ia = by_path.get(Path(dec.get("a", "")))
+                ib = by_path.get(Path(dec.get("b", "")))
+                if ia is None or ib is None:
+                    continue
+                st = next((s for s in self.groups.values()
+                           if ia in s.ranked and ib in s.ranked), None)
+                if st is None:
+                    continue
+                st.kept.update({ia, ib})
+                self.kept_both.append((ia, ib))
+                applied += 1
+            elif action == "skip_group":
+                paths = {Path(p) for p in dec.get("paths", [])}
+                for st in self.groups.values():
+                    members = {self.result.files[m].path for m in st.ranked}
+                    if members & paths:
+                        st.done = True
+                        applied += 1
+                        break
+        return applied
 
     # ---------------- 收尾 ----------------
     def cleanup_staging(self) -> int:

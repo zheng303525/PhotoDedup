@@ -11,7 +11,9 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QStackedWi
 
 from .. import APP_NAME
 from ..core.pipeline import Pipeline, ScanOptions, ScanResult
-from ..core.session import MODE_STAGING, MODE_TRASH, Session
+from ..core.session import (
+    MODE_STAGING, MODE_TRASH, Session, clear_saved_progress, saved_progress,
+)
 from .compare_page import ComparePage
 from .pages import FinishPage, ProgressPage, StartPage
 
@@ -199,11 +201,26 @@ class MainWindow(QMainWindow):
             return
         if not result.groups:
             self.toast("没有找到重复的图片")
-            self.session = Session(result, self.opt, mode=self._delete_mode)
+            self.session = Session(result, self.opt, mode=self._delete_mode,
+                                   progress_dir=cache_dir())
             self._show_finish()
             return
 
-        self.session = Session(result, self.opt, mode=self._delete_mode)
+        self.session = Session(result, self.opt, mode=self._delete_mode,
+                               progress_dir=cache_dir())
+        resume = saved_progress(result.root, cache_dir())
+        if resume:
+            ret = QMessageBox.question(
+                self, "继续上次审阅？",
+                f"检测到这个目录有上次未完成的审阅：\n"
+                f"已做 {resume.get('processed', 0)} 个决定（{resume.get('when', '')}）。\n\n"
+                "要继续上次的进度吗？选「No」则从头开始。",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if ret == QMessageBox.StandardButton.Yes:
+                n = self.session.apply_resume(resume)
+                if n:
+                    self.toast(f"已恢复上次审阅进度（{n} 个决定）")
         self.compare_page.bind(self.session)
         self.stack.setCurrentWidget(self.compare_page)
         self._set_shortcuts_enabled(True)
@@ -228,6 +245,7 @@ class MainWindow(QMainWindow):
         self._set_shortcuts_enabled(False)
         s = self.session
         assert s is not None
+        clear_saved_progress(s.root, cache_dir())  # 审阅结束（出报告），进度文件清掉
         freed = sum(r.size for r in s.deleted)
         if s.deleted:
             try:

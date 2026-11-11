@@ -10,7 +10,8 @@ import pytest
 
 from photodedup.core.pipeline import Pipeline, ScanOptions
 from photodedup.core.session import (
-    MODE_STAGING, MODE_TRASH, DeleteError, Session, restore_from_trash,
+    MODE_STAGING, MODE_TRASH, DeleteError, Session, clear_saved_progress,
+    restore_from_trash, saved_progress,
 )
 
 
@@ -98,6 +99,91 @@ def test_report_includes_low_confidence_groups(session: Session):
     md, _csv = session.write_report(session.result.root)
     text = md.read_text(encoding="utf-8")
     assert "低置信候选" in text, "报告应包含低置信候选章节"
+
+
+# ---------------- 审阅会话持久化 ----------------
+
+def test_progress_saved_and_resumable(sample_dir: Path, tmp_path: Path):
+    """审阅进度存盘 + 恢复：删除过的文件自然对齐（已移出不在重扫里），「都留」回放。"""
+    work = tmp_path / "photos"
+    shutil.copytree(sample_dir, work)
+    opt = ScanOptions(root=work, threshold=8, dihedral=True)
+    progress = tmp_path / "progress"
+
+    pipe = Pipeline(opt, tmp_path / "cache")
+    res1 = pipe.run()
+    pipe.close()
+    s1 = Session(res1, opt, mode=MODE_STAGING, staging_root=tmp_path / "staging",
+                 progress_dir=progress)
+    rec = s1.advice()
+    del_rec = s1.delete(rec.drop)
+    bout = s1.current()
+    ia, ib = bout.champion, bout.challenger
+    s1.keep_both()
+
+    saved = saved_progress(work, progress)
+    assert saved is not None, "决定后进度文件应存在"
+    assert saved["processed"] == 2, f"应记录 2 个决定，实际 {saved['processed']}"
+
+    # 第二次审阅（重扫同一目录）：删除过的文件不在结果里（已移出），「都留」回放
+    pipe2 = Pipeline(opt, tmp_path / "cache")
+    res2 = pipe2.run()
+    pipe2.close()
+    assert del_rec.path not in {i.path for i in res2.files}, "删除过的文件不该出现在重扫里"
+    s2 = Session(res2, opt, mode=MODE_STAGING, staging_root=tmp_path / "staging2",
+                 progress_dir=progress)
+    n = s2.apply_resume(saved)
+    assert n == 1, f"「都留」应回放 1 个决定，实际 {n}"
+    st = next(s for s in s2.groups.values() if ia in s.ranked and ib in s.ranked)
+    assert {ia, ib} <= st.kept, "都留的两张应标记为保留"
+
+
+def test_skip_group_resumes_as_done(sample_dir: Path, tmp_path: Path):
+    """整组跳过的决定恢复后，该组应标记为已完成。"""
+    work = tmp_path / "photos"
+    shutil.copytree(sample_dir, work)
+    opt = ScanOptions(root=work, threshold=8, dihedral=True)
+    progress = tmp_path / "progress"
+
+    pipe = Pipeline(opt, tmp_path / "cache")
+    res1 = pipe.run()
+    pipe.close()
+    s1 = Session(res1, opt, mode=MODE_STAGING, staging_root=tmp_path / "staging",
+                 progress_dir=progress)
+    bout = s1.current()
+    member_paths = {res1.files[m].path for m in res1.groups[bout.group_id].members}
+    s1.skip_group()
+
+    pipe2 = Pipeline(opt, tmp_path / "cache")
+    res2 = pipe2.run()
+    pipe2.close()
+    s2 = Session(res2, opt, mode=MODE_STAGING, staging_root=tmp_path / "staging2",
+                 progress_dir=progress)
+    n = s2.apply_resume(saved_progress(work, progress))
+    assert n >= 1, "跳过决定应被回放"
+    st = next(s for s in s2.groups.values()
+              if {res2.files[m].path for m in s.ranked} & member_paths)
+    assert st.done, "跳过的组恢复后应标记为已完成"
+
+
+def test_clear_saved_progress(sample_dir: Path, tmp_path: Path):
+    """审阅结束后清掉进度文件：文件存在 = 上次没走完（意外关闭）。"""
+    from photodedup.core.session import _progress_path
+
+    work = tmp_path / "photos"
+    shutil.copytree(sample_dir, work)
+    progress = tmp_path / "progress"
+    assert saved_progress(work, progress) is None
+
+    p = _progress_path(work, progress)
+    import json as _json
+
+    p.write_text(_json.dumps({"root": str(work),
+                              "decisions": [{"action": "keep_both"}]}),
+                 encoding="utf-8")
+    assert saved_progress(work, progress) is not None
+    clear_saved_progress(work, progress)
+    assert saved_progress(work, progress) is None
 
 
 # ---------------- 默认模式：系统回收站 ----------------

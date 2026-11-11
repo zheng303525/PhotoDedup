@@ -1,0 +1,32 @@
+# 虚拟环境
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 构建产物
+build/
+dist/
+*.spec.bak
+release/
+
+# 工具缓存
+.mypy_cache/
+.ruff_cache/
+
+# 本地临时
+_demo*/
+*.log
+out/
+
+# 临时验证产物
+_shots*/
+_demo*/
+_diagcache/
+_selftest*.txt

@@ -1,0 +1,7 @@
+# 运行时依赖（不含开发/打包工具）
+PySide6-Essentials>=6.7
+numpy>=1.26
+opencv-python-headless>=4.9
+pillow>=10.3
+pillow-heif>=0.17
+Send2Trash>=1.8

@@ -606,8 +606,11 @@ class Pipeline:
                       if not e.accepted and e.rel in (REL_BURST, REL_WEAK)]
         if reviewable:
             low_raw = collect_groups(len(result.files), reviewable)
+            taken = {m for g in groups for m in g.members}
             low_groups: list[Group] = []
             for members in low_raw:
+                if all(m in taken for m in members):
+                    continue  # 成员全部已在确认组里：weak 边是冗余的，展示出来是噪音
                 pairs = [e for k, e in edges.items()
                          if k[0] in members and k[1] in members
                          and not e.accepted and e.rel in (REL_BURST, REL_WEAK)]

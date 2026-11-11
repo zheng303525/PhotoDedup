@@ -79,6 +79,11 @@ def test_burst_pair_shows_as_low_confidence_group(scan):
     assert g.pairs, "低置信组应带着判定证据（数值留痕）"
     # 不影响正常分组：连拍仍不进重复组
     assert _group_of(scan, a) is None and _group_of(scan, b) is None
+    # 成员全部已在确认组里的组件不展示（weak 边冗余，展示是噪音）
+    grouped = {m for grp in scan.groups for m in grp.members}
+    for lg in low:
+        assert not all(m in grouped for m in lg.members), \
+            f"全部已在确认组里的低置信组件是噪音：{lg.members}"
 
 
 def test_flat_and_unrelated_not_grouped(scan):

@@ -11,7 +11,8 @@
 1. 一组至少留一张
 2. 删除前校验文件大小/修改时间没变，变了就拒删
 3. 删除失败不静默：抛 DeleteError 给界面提示，状态不动
-4. 默认「暂存区」模式，撤销是移动回去，100% 可恢复
+4. 默认「系统回收站」模式（跟着 Windows 习惯走），撤销时程序会自己去回收站捞回来；
+   捞不回来就明确报错，让用户手动还原，绝不假装成功
 """
 
 from __future__ import annotations
@@ -80,7 +81,7 @@ class Session:
     """一次「浏览并清理」的全过程。"""
 
     def __init__(self, result: ScanResult, options: ScanOptions,
-                 mode: str = MODE_STAGING, staging_root: Path | None = None) -> None:
+                 mode: str = MODE_TRASH, staging_root: Path | None = None) -> None:
         self.result = result
         self.opt = options
         self.mode = mode
@@ -270,7 +271,8 @@ class Session:
         else:
             if not restore_from_trash(rec.path):
                 raise DeleteError(
-                    "这张进的是系统回收站，程序无法自动还原，请打开回收站右键「还原」")
+                    "自动从回收站还原没成功（可能已被清空，或回收站里同名的不是这一份），"
+                    "请打开回收站右键「还原」")
 
         self.deleted.pop()
         self._decisions.append({"action": "undo", "path": str(rec.path)})
@@ -383,28 +385,47 @@ class Session:
 
 
 def restore_from_trash(path: Path) -> bool:
-    """尽力从 Windows 回收站还原指定文件；做不到就返回 False。"""
+    """尽力从 Windows 回收站还原指定文件；做不到就返回 False。
+
+    两个坑（都实测过）：
+    1. 回收站里的项目，``Item.Path`` 指向 ``$Recycle.Bin\\$Rxxxxxx``，**不是**原位置，
+       拿它跟原路径比永远不相等 —— 必须用「删除前所在目录
+       ``System.Recycle.DeletedFrom``」拼上文件名来配对。
+    2. 谓语（verb）的规范名是 ``undelete``；中文资源里显示为「还原」，
+       直接 ``InvokeVerb('还原')`` 在英文谓语环境下不生效，两个都试才稳。
+    同名文件被删过多次时，取最后删的那一份（按 DateDeleted）。
+    """
     if os.name != "nt":
         return False
     ps = (
         "$ErrorActionPreference='SilentlyContinue';"
-        "$target=[IO.Path]::GetFullPath($env:PD_RESTORE);"
+        "[Console]::OutputEncoding=[Text.Encoding]::UTF8;"
+        "$t=[IO.Path]::GetFullPath($env:PD_RESTORE);"
         "$shell=New-Object -ComObject Shell.Application;"
         "$rb=$shell.Namespace(10);"
-        "$hit=$null;"
+        "$hit=$null;$best=$null;"
         "foreach($i in $rb.Items()){"
-        "  try{ if([IO.Path]::GetFullPath($i.Path) -eq $target){ $hit=$i; break } }catch{}"
+        "  try{"
+        "    $o=$i.ExtendedProperty('System.Recycle.DeletedFrom');"
+        "    if(-not $o){continue}"
+        "    if([IO.Path]::GetFullPath([IO.Path]::Combine($o,$i.Name)) -ne $t){continue}"
+        "    $d=$i.ExtendedProperty('System.Recycle.DateDeleted');"
+        "    if(($hit -eq $null) -or ($d -gt $best)){$hit=$i;$best=$d}"
+        "  }catch{}"
         "};"
-        "if($hit -eq $null){ Write-Output 'NOTFOUND'; exit 2 };"
-        "$hit.InvokeVerb('还原');"
-        "Start-Sleep -Milliseconds 400;"
-        "if(Test-Path -LiteralPath $target){ Write-Output 'OK'; exit 0 } else { Write-Output 'FAIL'; exit 3 }"
+        "if($hit -eq $null){Write-Output 'NOTFOUND';exit 2};"
+        "foreach($v in @('undelete','还原','restore')){"
+        "  try{$hit.InvokeVerb($v);Start-Sleep -Milliseconds 400}catch{};"
+        "  if(Test-Path -LiteralPath $t){Write-Output 'OK';exit 0}"
+        "};"
+        "Write-Output 'FAIL';exit 3"
     )
     try:
         env = dict(os.environ, PD_RESTORE=str(path))
         cp = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            capture_output=True, text=True, timeout=30, env=env,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=40, env=env,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         return cp.returncode == 0

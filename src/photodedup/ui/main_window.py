@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QStackedWi
 
 from .. import APP_NAME
 from ..core.pipeline import Pipeline, ScanOptions, ScanResult
-from ..core.session import MODE_STAGING, Session
+from ..core.session import MODE_STAGING, MODE_TRASH, Session
 from .compare_page import ComparePage
 from .pages import FinishPage, ProgressPage, StartPage
 
@@ -156,7 +156,7 @@ class MainWindow(QMainWindow):
             dihedral=bool(params.get("dihedral", True)),
             detect_near=bool(params.get("detect_near", True)),
         )
-        self._delete_mode = params.get("mode", MODE_STAGING)
+        self._delete_mode = params.get("mode", MODE_TRASH)
         self.compare_page.allow_unsure_delete = bool(params.get("allow_unsure", False))
 
         self.stack.setCurrentWidget(self.progress_page)

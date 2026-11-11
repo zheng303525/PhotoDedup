@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
 import pytest
 
 from photodedup.core.pipeline import Pipeline, ScanOptions
-from photodedup.core.session import MODE_STAGING, DeleteError, Session
+from photodedup.core.session import (
+    MODE_STAGING, MODE_TRASH, DeleteError, Session, restore_from_trash,
+)
 
 
 @pytest.fixture()
@@ -86,3 +89,45 @@ def test_report_written(session: Session):
     assert md.exists() and csv.exists()
     text = md.read_text(encoding="utf-8")
     assert "去重报告" in text and "已删除的文件" in text
+
+
+# ---------------- 默认模式：系统回收站 ----------------
+
+def test_default_mode_is_trash():
+    """默认走系统回收站（跟资源管理器一致），暂存区是可选项。"""
+    import inspect
+    sig = inspect.signature(Session.__init__)
+    assert sig.parameters["mode"].default == MODE_TRASH
+
+
+@pytest.fixture()
+def trash_session(sample_dir: Path, tmp_path: Path) -> Session:
+    work = tmp_path / "photos"
+    shutil.copytree(sample_dir, work)
+    opt = ScanOptions(root=work, threshold=8, dihedral=True)
+    pipe = Pipeline(opt, tmp_path / "cache")
+    res = pipe.run()
+    pipe.close()
+    return Session(res, opt, mode=MODE_TRASH)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="回收站还原依赖 Windows Shell")
+def test_undo_pulls_file_back_from_recycle_bin(trash_session: Session):
+    """回收站模式下撤销必须真的把文件捞回来（这条曾经是坏的：
+    旧实现拿 Item.Path 比原路径，而回收站项的 Path 指向 $Recycle.Bin，永远不相等）。"""
+    rec = trash_session.advice()
+    target = trash_session.result.files[rec.drop].path
+    size = target.stat().st_size
+    trash_session.delete(rec.drop)
+    assert not target.exists(), "删除后原位置不该还有文件"
+    trash_session.undo()
+    assert target.exists(), "撤销后文件必须从回收站回到原位置"
+    assert target.stat().st_size == size
+
+
+@pytest.mark.skipif(os.name != "nt", reason="依赖 Windows Shell")
+def test_restore_from_trash_reports_failure(tmp_path: Path):
+    """找不到就明确返回 False，不假装成功。"""
+    ghost = tmp_path / "根本没被删过.jpg"
+    ghost.write_bytes(b"x")
+    assert restore_from_trash(ghost) is False

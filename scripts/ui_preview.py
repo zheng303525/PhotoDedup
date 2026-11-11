@@ -70,7 +70,7 @@ def main() -> int:
 
     win.start_page.ed_dir.setText(str(work))
     win.start_scan({"root": work, "threshold": 8, "detect_near": True,
-                    "dihedral": True, "mode": "staging", "allow_unsure": False})
+                    "dihedral": True, "mode": "trash", "allow_unsure": False})
     pump(app, 0.3)
     win.grab().save(str(out / "02_progress.png"))
 
@@ -101,6 +101,9 @@ def main() -> int:
     pump(app, 0.4)
     win.grab().save(str(out / "07_after_undo.png"))
 
+    # 再删一次，让完成页走「本次删除了 N 个」那条分支
+    win.compare_page.delete_side(1)
+    pump(app, 0.4)
     win.finish()
     pump(app, 0.5)
     win.grab().save(str(out / "08_finish.png"))

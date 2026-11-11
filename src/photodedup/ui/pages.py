@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.scanner import human_size
+from ..core.session import MODE_STAGING, MODE_TRASH
 from . import theme
 
 
@@ -75,9 +76,11 @@ class StartPage(QWidget):
         lbl_del = QLabel("删除方式")
         lbl_del.setObjectName("FieldName")
         self.cmb_delete = QComboBox()
-        self.cmb_delete.addItems(["移到待删文件夹（可撤销）", "系统回收站"])
+        self.cmb_delete.addItem("系统回收站（默认）", MODE_TRASH)
+        self.cmb_delete.addItem("移到待删文件夹（100% 可撤销）", MODE_STAGING)
         self.cmb_delete.setFixedWidth(230)
-        del_hint = QLabel("待删文件夹里的内容确认无误后可以一键清空；回收站方式撤销只能手动去回收站还原")
+        del_hint = QLabel("回收站方式跟资源管理器一致，撤销时程序自动去回收站捞回来；"
+                          "待删文件夹方式不动回收站，适合先攒着核一遍再清空")
         del_hint.setObjectName("Dim")
         del_hint.setWordWrap(True)
         grid.addWidget(lbl_del, r, 0)
@@ -138,7 +141,7 @@ class StartPage(QWidget):
             "threshold": self.spn_threshold.value(),
             "detect_near": self.chk_near.isChecked(),
             "dihedral": self.chk_dihedral.isChecked(),
-            "mode": "staging" if self.cmb_delete.currentIndex() == 0 else "trash",
+            "mode": self.cmb_delete.currentData(),
             "allow_unsure": self.chk_unsure.isChecked(),
         })
 
@@ -251,7 +254,8 @@ class FinishPage(QWidget):
                     + ("删除的文件在待删文件夹里，确认没问题再清空：<br>"
                        f"<span style='color:{theme.TEXT_DIM}'>{staging}</span>"
                        if mode == "staging" else
-                       "删除的文件已进系统回收站。"))
+                       "删除的文件已进系统回收站，想找回按 <b>Z</b> 撤销，"
+                       "或直接去回收站右键「还原」。"))
         self.lbl_body.setText(body)
         self.btn_cleanup.setVisible(mode == "staging" and deleted > 0)
         self.btn_open_staging.setVisible(mode == "staging" and deleted > 0)

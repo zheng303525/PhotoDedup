@@ -31,6 +31,38 @@ def _probe() -> list[str]:
     return lines
 
 
+def _trash_roundtrip() -> str:
+    """默认删除方式是系统回收站，撤销要靠 Shell COM 捞回来 —— 这条路在打包产物里必须能跑通，
+    不然「按了删除却撤不回」是最难受的失败。所以自检里真删一次再捞回来。"""
+    if os.name != "nt":
+        return "SKIP 回收站往返（非 Windows）"
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp(prefix="pd_selftest_"))
+    f = tmp / "自检-回收站 (1).txt"
+    try:
+        f.write_text("selftest", encoding="utf-8")
+        from send2trash import send2trash
+
+        send2trash(str(f))
+        if f.exists():
+            return "FAIL 回收站：send2trash 之后文件还在"
+        from .core.session import restore_from_trash
+
+        t0 = time.time()
+        if not restore_from_trash(f):
+            return "FAIL 回收站：从回收站还原失败（撤销会不可用）"
+        if f.read_text(encoding="utf-8") != "selftest":
+            return "FAIL 回收站：还原回来的内容不对"
+        return f"OK   回收站往返（删除→还原 {time.time() - t0:.1f}s）"
+    except Exception as e:
+        return f"FAIL 回收站：{type(e).__name__}: {e}"
+    finally:
+        import shutil
+
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def selftest(directory: str | None, out: str | None) -> int:
     from . import __version__
 
@@ -45,6 +77,8 @@ def selftest(directory: str | None, out: str | None) -> int:
         lines.append(f"{'OK  ' if icon.exists() else 'FAIL'} resource icon.ico → {icon}")
     except Exception as e:
         lines.append(f"FAIL resource_path: {e}")
+
+    lines.append(_trash_roundtrip())
 
     rc = 0
     if directory:

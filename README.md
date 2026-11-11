@@ -1,51 +1,38 @@
-# 图片去重工坊 · PhotoDedup
+# PhotoDedup · 图片去重工坊
 
-递归扫描一个目录（含全部子文件夹）里的图片，找出重复项，然后**一张一张陪你确认**：
-左右并排看两张图，程序给出「保留哪张、删哪张、为什么」，你按 `Delete` 就删掉不推荐的那张，
-自动跳到下一对。全程只读 + 逐个确认，不存在「一键批量删」这种会后悔的操作。
+**English** ｜ [简体中文](README.zh-CN.md)
 
-## 界面
+A desktop tool that scans a folder tree for duplicate images and then **walks you through them one pair at a time**:
+two images side by side, a recommendation on which one to keep and *why*, delete the loser with `Delete`, move on
+to the next pair. Read-only until you press a key — no "clean everything" button to regret.
 
-对比页——左右并排，各自标着「保留 / 删除」，下方是推荐理由与两张图的信息卡：
+![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
+![Platform](https://img.shields.io/badge/platform-Windows-0078D4)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-![对比页](docs/screenshots/03_compare_side.png)
+![Compare page](docs/screenshots/03_compare_side.png)
 
-除了并排看，还可以切到**叠加**（半透明套在一起，检查是否位移）和**差异**（把不一样的
-地方标红，肉眼直接判断「差异是压缩噪点还是内容变了」）：
+## Why
 
-| 叠加模式 | 差异热图 |
-| --- | --- |
-| ![叠加](docs/screenshots/04_compare_overlay.png) | ![差异](docs/screenshots/05_compare_diff.png) |
+The same photo usually exists in a library in many shapes: the original from the camera, a compressed copy
+forwarded through WeChat, a resized version for a slide, a copy with rewritten EXIF, a version rotated 90°.
+Filename and file size won't find them; MD5 only catches files where *not a single byte* changed.
 
-扫描 → 对比 → 完成，三个页面的完整流程：
+PhotoDedup does three things:
 
-| 起始页 | 扫描进度 | 完成报告 |
-| --- | --- | --- |
-| ![起始](docs/screenshots/01_start.png) | ![进度](docs/screenshots/02_progress.png) | ![完成](docs/screenshots/08_finish.png) |
+1. **Layered matching** — the byte layer and pixel layer are allowed to conclude; perceptual layers only propose
+   candidates. The further down, the less certain.
+2. **Pairwise decisions** — tournament style. `Delete` drops the non-recommended one, `Z` undoes it.
+3. **A paper trail** — what was deleted, what was kept, and why, all written to a report.
 
-## 它解决什么问题
+## Install
 
-照片库里同一张图常常有好多份：手机导出的原图、微信转发的压缩版、自己缩放过的版本、
-改过 EXIF 的副本、旋转过 90 度的版本……用文件名或者文件大小去找根本找不到，
-用 MD5 只能抓到「一个字节都没变」的那些。
+### Prebuilt binary (Windows, no Python needed)
 
-这个工具做三件事：
+Download `图片去重工坊.exe` from [Releases](../../releases/latest) and run it. Single file, ~103 MB, no installer.
+First launch unpacks to a temp folder (2–4 s).
 
-1. **分层判重**——字节层定论、像素层定论、感知层只给候选，越往后越不确定
-2. **逐对决策**——擂台式对比，`Delete` 删不推荐的那张，`Z` 随时撤销
-3. **留痕**——删了什么、留在哪、为什么，都写进报告
-
-## 快速开始
-
-### 直接用打包好的 exe
-
-```
-dist\图片去重工坊.exe
-```
-
-双击运行，不需要装 Python。首次启动会解压到临时目录，大约 2–4 秒。
-
-### 从源码运行
+### From source
 
 ```bash
 python -m venv .venv
@@ -53,151 +40,169 @@ python -m venv .venv
 .venv\Scripts\python run.py
 ```
 
-或 `python -m photodedup`（需要先把 `src` 加进 `PYTHONPATH`）。
+or `python -m photodedup` with `src` on `PYTHONPATH`.
 
-## 怎么用
+## Usage
 
-1. 选目录（可以直接把文件夹拖进窗口），按需调判重阈值，点「开始扫描」
-2. 扫描完成后自动进入对比页，屏幕左右两张图，各自标着「保留」或「删除」
-3. 看下方的推荐理由，觉得对就按 `Delete`；觉得不对按 `1`/`2` 自己指定
-4. 一组有多张时是擂台制：删掉一个，赢家继续和下一张比，直到只剩一张
-5. 全部走完出报告。默认删到系统回收站，想反悔按 `Z` 撤销，或去回收站右键「还原」
+1. Pick a folder (drag & drop works), adjust the threshold if needed, hit **Start scan**
+2. The compare page opens automatically: two images, each tagged **Keep** or **Delete**
+3. Read the reason underneath. Agree → `Delete`. Disagree → press `1`/`2` to pick the loser yourself
+4. Groups with 3+ images run as a tournament: the winner stays and faces the next one
+5. Finish → a Markdown + CSV report is written. Deletions go to the Recycle Bin; `Z` pulls them back
 
-### 快捷键
+### Shortcuts
 
-| 键 | 作用 |
+| Key | Action |
 |---|---|
-| `Delete` | 删除推荐删除的那张 |
-| `1` / `2` | 明确删左边 / 右边 |
-| `空格` | 两张都留，问下一对 |
-| `Z` / `Ctrl+Z` | 撤销上一次删除 |
-| `F` | 切换视角：并排 → 叠加 → 差异高亮 |
-| `+` / `-` / `0` | 放大 / 缩小 / 复位 |
-| `滚轮` | 以光标为中心缩放，两张图同步 |
-| `拖动` | 平移，两张图同步 |
-| `Esc` | 结束并出报告 |
+| `Delete` | Delete the recommended one |
+| `1` / `2` | Delete left / right explicitly |
+| `Space` | Keep both, next pair |
+| `Z` / `Ctrl+Z` | Undo last deletion |
+| `F` | Cycle view: side-by-side → overlay → difference |
+| `+` / `-` / `0` | Zoom in / out / reset |
+| Wheel | Zoom at cursor, both images stay in sync |
+| Drag | Pan, both images stay in sync |
+| `Esc` | Finish and write the report |
 
-### 三种视角
+### Three views
 
-- **并排**：默认，左右各一张，同步缩放平移（拖一张另一张跟着动）
-- **叠加**：把 B 半透明叠在 A 上，滑块调到两端可分别看两张，中间是混合，适合找细微位移
-- **差异高亮**：把两张的差异放大成红色热力图，适合一眼看出「到底改了哪儿」
+- **Side by side** — the default; synchronized zoom and pan
+- **Overlay** — B blended over A with a slider; push it to either end to inspect one image, keep it centered to spot
+  small shifts
+- **Difference** — mismatches rendered as a red heatmap, so you can tell compression noise from a change of content
 
-## 判重原理
+| Overlay | Difference |
+| --- | --- |
+| ![Overlay](docs/screenshots/04_compare_overlay.png) | ![Difference](docs/screenshots/05_compare_diff.png) |
 
-四道关卡，逐层下探：
+| Start | Scanning | Done |
+| --- | --- | --- |
+| ![Start](docs/screenshots/01_start.png) | ![Progress](docs/screenshots/02_progress.png) | ![Finish](docs/screenshots/08_finish.png) |
 
-| 层 | 判据 | 结论强度 |
+## How it decides
+
+Four gates, each one more expensive than the last:
+
+| Layer | Criterion | Strength of conclusion |
 |---|---|---|
-| 1. 字节层 | MD5 相同 | **确定**，删哪张都不损失 |
-| 2. 像素层 | 整图解码后 RGB 逐字节相同 | **确定**，只是封装/元数据不同 |
-| 3. 感知层 | pHash（DCT 低频 64 位）+ dHash，含 8 种旋转镜像变体 | 只给候选，**永不给确定** |
-| 4. 几何层 | ORB 特征 + RANSAC 单应性 + 对齐后差异分布（含**差异块数量**） | 决定候选能不能升级为「较高」 |
+| 1. Bytes | Identical MD5 | **Certain** — deleting either loses nothing |
+| 2. Pixels | Full decode, byte-identical RGB | **Certain** — only container/metadata differ |
+| 3. Perceptual | pHash (64-bit DCT low frequency) + dHash, with 8 rotation/mirror variants | Candidates only, **never certain** |
+| 4. Geometry | ORB features + RANSAC homography + difference distribution after alignment (including **the number of significant blocks**) | Decides whether a candidate may be promoted |
 
-第 4 层是必需的，因为**前两层都会同时骗过**：同场景连拍两张，背景完全相同，
-pHash 可能只差 8 位、ORB 内点率能到 0.99，但它们是两张不同的照片。唯一区别是——
-同一张照片的不同版本，差异是分散的编码噪声（**块数 0**）；连拍的差异集中在物体挪走的那一块；
-而两张同版式不同内容的手机截图，差异是**许多处小改动（块数 8）**。
+Layer 4 is not optional, because **layers 2 and 3 can be fooled at the same time**. Two photos taken seconds apart
+share an identical background: pHash may differ by 8 bits, ORB inlier ratio can reach 0.99 — yet they are two
+different photographs. The discriminator is the *shape* of the difference:
 
-这条判据不是想出来的，是拿 6629 张真实截图跑出来的教训，实测数据见 `docs/algorithm.md`。
+- The same photo in another encoding → differences are scattered encoding noise, **0 significant blocks**
+- A burst shot → the difference is one concentrated region where the subject moved
+- Two screenshots of the same app taken minutes apart → **many small changes, ~8 blocks**
 
-## 推荐引擎
+That criterion was not invented at a desk; it came from running the tool over 6,629 real screenshots. Measured
+numbers and threshold calibration are in [`docs/algorithm.md`](docs/algorithm.md) (Chinese).
 
-按「删错了会心疼什么」排序打分：
+## Recommendation engine
 
-| 维度 | 权重 | 判据 |
+Scored by "what would hurt if it were deleted":
+
+| Dimension | Weight | Signal |
 |---|---|---|
-| 像素总数 | 35 | 分辨率越高，放大与二次裁剪空间越大 |
-| 有效锐度 | 20 | 拉普拉斯方差，识别过度压缩/缩小 |
-| JPEG 质量 | 15 | 从量化表反推（IJG 公式），无损格式另有加分 |
-| 同分辨率体积 | 10 | 体积更大通常压缩更轻 |
-| 元数据完整度 | 10 | EXIF/机型/GPS/ICC 是否齐全，识别转发副本 |
-| 拍摄时间 | 5 | 更早的更像原件 |
-| 文件名 | 5 | 是否带 `_副本`/`(1)`/`微信图片` 之类标记 |
+| Pixel count | 35 | Higher resolution leaves more room to zoom and re-crop |
+| Effective sharpness | 20 | Laplacian variance; detects over-compression and downscaling |
+| JPEG quality | 15 | Estimated from quantization tables (IJG); lossless formats get a bonus |
+| Size at equal resolution | 10 | Bigger usually means lighter compression |
+| Metadata completeness | 10 | EXIF / camera / GPS / ICC — flags forwarded copies |
+| Capture time | 5 | Earlier is more likely the original |
+| Filename | 5 | `_copy`, `(1)`, `IMG-副本`, etc. |
 
-两条硬规则：
+Two hard rules:
 
-- **得分差距小于 6 分时，`Delete` 不生效**，要求你按 `1`/`2` 自己指定
-- 裁剪、旋转、镜像这类构图差异，额外给警告，不悄悄替你决定
+- **If the scores are within 6 points, `Delete` does nothing** — you must pick with `1`/`2`
+- Crops, rotations and mirrors get an explicit warning instead of a silent decision
 
-## 安全设计
+## Safety
 
-1. 默认删除方式是**系统回收站**（和资源管理器一致的习惯）。`Z` 键撤销时程序会自己去回收站把文件捞回来；捞不回来就直接报错让你手动还原，不会假装成功
-2. 也可以选「移到 `<目录>\_去重待删_<时间戳>\`」：保留原始目录结构，撤销就是移动回去，100% 可还原，适合先攒着核一遍再一键清空
-3. **一组至少留一张**：删到只剩一张自动结束该组
-4. 删除前校验文件大小与修改时间，被外部改动过就拒删
-5. 删除失败不静默，红条提示且停在当前对
-6. 不会自动删任何东西——每一个删除都是你按的键
+1. Deletions go to the **Windows Recycle Bin**. `Z` asks the shell to restore the file; if that fails, you get a hard
+   error, never a silent lie.
+2. Alternatively, move files into `<folder>\_去重待删_<timestamp>\` keeping the original tree — restoring is a move
+   back, 100 % reliable, good for reviewing a batch before purging it.
+3. **At least one file per group survives** — deleting down to one ends the group.
+4. Size and mtime are verified right before each delete; externally modified files are refused.
+5. Failures are never silent: an error banner appears and you stay on the current pair.
+6. Nothing is ever deleted automatically — every deletion is a key you pressed.
 
-> 回收站还原的两个实现坑（都实测过）：回收站项的 `Item.Path` 指向 `$Recycle.Bin\…` 而不是原位置，
-> 所以必须用「删除前所在目录 `System.Recycle.DeletedFrom` + 文件名」配对；谓语规范名是 `undelete`，
-> 中文环境显示成「还原」，两个都要试。同名文件删过多次时取最后删的那一份。
+## Tuning the threshold
 
-## 阈值标定
+The default threshold of 8 is a starting point:
 
-默认阈值 8 只是起点。判断依据：
+- Mostly camera originals plus messaging-app forwards → 8 is fine
+- "They're identical but it didn't find them" → raise to 10–12; more burst shots will appear as candidates
+  (labelled *same scene, different frame* rather than grouped)
+- "These are different but it grouped them" → lower to 5–6, and keep that pair as a negative regression sample
 
-- 你库里的照片如果大多是手机原图 + 微信转发，8 够用
-- 如果经常出现「明明一样却没抓到」，调到 10–12，代价是混进更多连拍候选（它们会显示为「同场景不同张」而不是直接成组，需要你确认）
-- 如果出现「不是同一张却被判成重复」，立刻调小到 5–6，并把那两张图留存下来做为负样本回归测试
-
-## 开发
+## Development
 
 ```bash
-.venv\Scripts\python -m pytest -q          # 23 项测试，含连拍/纯色/无关图等负样本
-.venv\Scripts\python scripts\diag_scan.py <目录>     # 不开界面，直接看分组与理由
-.venv\Scripts\python scripts\ui_preview.py --dir <目录> --out _shots   # 离屏渲染各页面截图
-.venv\Scripts\python scripts\make_icon.py            # 重新生成图标
+.venv\Scripts\python -m pytest -q                      # 23 tests, incl. bursts / flat walls / unrelated images
+.venv\Scripts\python scripts\diag_scan.py <folder>     # headless scan: groups and reasons
+.venv\Scripts\python scripts\ui_preview.py --dir <folder> --out _shots   # render every page to PNG
+.venv\Scripts\python scripts\make_icon.py              # regenerate the icon
 ```
 
-### 打包
+### Build
 
 ```bash
-.venv\Scripts\python scripts\build.py      # 打包 + 改名 + 自检一条龙
+.venv\Scripts\python scripts\build.py      # package + rename + selftest
 ```
 
-产物：`dist\图片去重工坊.exe`（单文件，约 103 MB）。自检会真删一张临时图再把它从回收站捞回来，
-确认打包产物里「删除 → 撤销」这条路是通的（`--selftest` 也可以单独跑）。
+Output: `dist\图片去重工坊.exe`. The selftest deletes a temporary file, pulls it back from the Recycle Bin and
+verifies the content, so the shipped binary proves that *delete → undo* works on your machine
+(`--selftest` can also be run standalone).
 
-## 目录结构
+## Layout
 
 ```
 src/photodedup/
-    core/               与界面无关的判重内核，可单测
-        scanner.py      递归扫描、格式白名单、跳过规则
-        imageio.py      解码、EXIF、JPEG 质量估计、锐度
-        hashing.py      MD5 / pHash / dHash / 旋转镜像变体
-        verify.py       ORB 几何对齐 + 差异分布 + 判定
-        grouping.py     MIH 候选生成 + 并查集
-        pipeline.py     流水线编排、线程池、sqlite 指纹缓存
-        recommend.py    打分与理由生成
-        session.py      擂台队列、删除、撤销、报告
-    ui/                 PySide6 界面
-        widgets.py      看图控件、信息卡、推荐面板
-        compare_page.py 对比页
-        pages.py        开始 / 进度 / 结束页
-        main_window.py  主窗口、扫描线程、快捷键
-tests/                  端到端测试（合成样本）
-scripts/                诊断与打包辅助脚本（diag_scan / probe_pair / ui_preview / make_icon / build）
+    core/               UI-free engine, unit-testable
+        scanner.py      recursive walk, format allowlist, skip rules
+        imageio.py      decoding, EXIF, JPEG quality estimate, sharpness
+        hashing.py      MD5 / pHash / dHash / rotation-mirror variants
+        verify.py       ORB alignment + difference distribution + verdict
+        grouping.py     MIH candidate generation + union-find
+        pipeline.py     orchestration, thread pool, sqlite fingerprint cache
+        recommend.py    scoring and reason generation
+        session.py      tournament queue, delete, undo, reports
+    ui/                 PySide6 front end
+        widgets.py      image pane, info card, advice panel
+        compare_page.py comparison page
+        pages.py        start / progress / finish pages
+        main_window.py  main window, scan worker, shortcuts
+tests/                  end-to-end tests on synthetic samples
+scripts/                diagnostics and packaging helpers
+docs/                   algorithm notes and screenshots
 ```
 
-## 已知限制
+## Known limitations
 
-- **大幅裁剪抓不到**：裁掉 20% 会让 pHash 距离跳到 24（阈值才 8），默认不进候选。这是有意的——宁可漏，不可错
-- **大面积调色 / 大块水印会被当成「内容不同」**：差异块太大，和「物体挪位」分不开，只能排除
-- **纯色/天空/白墙/扫描件**：ORB 提不到特征点，一律给「低」置信，不并组
-- **镜像/翻转**：单应性对翻转无效，只能靠指纹变体命中，给「接近」不给「较高」
-- **HEIC** 依赖 `pillow-heif`（已随包分发）；RAW（CR3/NEF）只做字节层
-- **GIF** 只取首帧
-- 感知层的结论永远不是「同一份文件」，删之前请扫一眼画面
+- **Heavy crops are missed** — cropping 20 % pushes the pHash distance to 24 (threshold is 8). Intentional:
+  missing a duplicate is cheaper than a wrong merge.
+- **Large tonal edits / big watermarks** look like "different content" — the difference region is too large to
+  distinguish from a moved object, so they are excluded.
+- **Flat images** (sky, white walls, scans) give ORB nothing to match, so they stay at low confidence and are not
+  grouped.
+- **Mirrors/flips** can't be verified by homography; they only match through hash variants and never reach "high".
+- **HEIC** needs `pillow-heif` (bundled); RAW (CR3/NEF) only gets byte-level comparison.
+- **GIF** only the first frame.
+- A perceptual verdict is never "the same file" — glance at the picture before deleting.
 
-## 实测规模
+## Benchmarks
 
-| 目录 | 文件数 | 耗时 | 结果 |
+| Folder | Files | Time | Result |
 |---|---|---|---|
-| 合成样本（9 类变体 + 8 类负样本） | 17 | 1.0 秒 | 1 组 9 张，负样本全部 0 组 |
-| `D:\OneDrive\Pictures\截图`（真实手机截图） | 6629 | 63 秒（缓存命中 6625） | 18 组 / 22 个副本，逐对核对成立 |
+| Synthetic suite (9 variant types + 8 negative cases) | 17 | 1.0 s | 1 group of 9; negatives all clean |
+| `D:\OneDrive\Pictures\截图` (real phone screenshots) | 6,629 | 63 s (6,625 cache hits) | 18 groups / 22 duplicates, every pair verified by eye |
 
-## 许可
+## License
 
-个人使用。判重算法与阈值标定过程的详细说明见 `docs/algorithm.md`。
+[MIT](LICENSE). The algorithm and the calibration process are documented in
+[`docs/algorithm.md`](docs/algorithm.md) (Chinese).

@@ -5,10 +5,21 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "photodedup"
 version = "1.0.0"
-description = "图片去重工坊 —— 递归扫描目录，逐对确认重复照片，保留最优副本"
+description = "Recursively scan a folder for duplicate photos, confirm them pair by pair, keep the best copy."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
+authors = [{ name = "Victo", email = "victor.zheng@outlook.com" }]
+keywords = ["deduplication", "photos", "images", "phash", "opencv", "pyside6", "desktop"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics",
+]
 dependencies = [
     "PySide6-Essentials>=6.7",
     "numpy>=1.26",
@@ -17,6 +28,11 @@ dependencies = [
     "pillow-heif>=0.17",
     "Send2Trash>=1.8",
 ]
+
+[project.urls]
+Homepage = "https://github.com/zheng303525/PhotoDedup"
+Issues = "https://github.com/zheng303525/PhotoDedup/issues"
+Changelog = "https://github.com/zheng303525/PhotoDedup/releases"
 
 [project.scripts]
 photodedup = "photodedup.__main__:main"

@@ -133,6 +133,7 @@ class PairVerdict:
     diff_ratio: float = 0.0   # 对齐后总差异占比
     max_block: float = 0.0    # 最大差异连通块占比
     fill: float = 0.0         # 最大块的填充率
+    blocks: int = 0           # 显著差异块数量（多处改动 vs 编码噪声）
     note: str = ""
 
     @property

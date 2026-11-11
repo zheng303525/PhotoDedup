@@ -29,7 +29,7 @@ from .models import (
     REL_EXACT, REL_NEAR, REL_SAME_PIXEL,
 )
 from .verify import (
-    DEF_MAX_BLOCK, DEF_MAX_DIFF, DEF_MAX_FILL,
+    DEF_MAX_BLOCK, DEF_MAX_BLOCKS, DEF_MAX_DIFF, DEF_MAX_FILL,
     DEF_MIN_INLIERS, DEF_MIN_RATIO, evaluate_pair,
 )
 
@@ -81,6 +81,7 @@ class ScanOptions:
     max_block: float = DEF_MAX_BLOCK
     max_diff: float = DEF_MAX_DIFF
     max_fill: float = DEF_MAX_FILL
+    max_blocks: int = DEF_MAX_BLOCKS
     max_links: int = 12
     workers: int = 0
 
@@ -381,7 +382,8 @@ class Pipeline:
                                             min_ratio=opt.min_ratio,
                                             max_block=opt.max_block,
                                             max_diff=opt.max_diff,
-                                            max_fill=opt.max_fill)}
+                                            max_fill=opt.max_fill,
+                                            max_blocks=opt.max_blocks)}
                 except Exception:
                     return None
 
@@ -406,7 +408,7 @@ class Pipeline:
                         inliers=res["inliers"], ratio=res["ratio"],
                         matches=res["matches"], diff_ratio=res["diff_ratio"],
                         max_block=res["max_block"], fill=res["fill"],
-                        note=res["note"],
+                        blocks=res.get("blocks", 0), note=res["note"],
                     )
                     edges[(min(pv.a, pv.b), max(pv.a, pv.b))] = pv
                     if n % 10 == 0 or n == total3:
@@ -458,12 +460,13 @@ def verify_missing_pair(result: ScanResult, a: int, b: int,
                             fa.width == fb.width and fa.height == fb.height,
                             min_inliers=opt.min_inliers, min_ratio=opt.min_ratio,
                             max_block=opt.max_block, max_diff=opt.max_diff,
-                            max_fill=opt.max_fill)
+                            max_fill=opt.max_fill, max_blocks=opt.max_blocks)
     except Exception as e:
         return PairVerdict(a=a, b=b, pd=pd, note=f"复核失败：{e}")
     pv = PairVerdict(a=a, b=b, pd=pd, rel=res["rel"], inliers=res["inliers"],
                      ratio=res["ratio"], matches=res["matches"],
                      diff_ratio=res["diff_ratio"], max_block=res["max_block"],
-                     fill=res["fill"], note=res["note"])
+                     fill=res["fill"], blocks=res.get("blocks", 0),
+                     note=res["note"])
     result.edges[key] = pv
     return pv

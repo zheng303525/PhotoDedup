@@ -108,6 +108,40 @@ def build_samples(root: Path) -> dict[str, Path]:
                    fill=tuple(int(v) for v in rng.integers(0, 256, 3)))
     save("14_other.jpg", other, 90)
 
+    # 同版式不同内容的手机截图：布局完全一样，文字不同 —— 真实库里最容易误判的一类
+    from PIL import ImageFont
+
+    def _font(size: int):
+        for name in ("arial.ttf", "segoeui.ttf", "msyh.ttc"):
+            try:
+                return ImageFont.truetype(name, size)
+            except Exception:
+                continue
+        return ImageFont.load_default()
+
+    def screen(rows: list[str], accent: tuple[int, int, int]) -> Image.Image:
+        im = Image.new("RGB", (540, 960), (250, 250, 252))
+        d = ImageDraw.Draw(im)
+        d.rectangle([0, 0, 540, 46], fill=(40, 44, 52))
+        d.text((14, 12), "9:41   100%", font=_font(20), fill=(255, 255, 255))
+        d.rectangle([0, 46, 540, 150], fill=accent)
+        d.text((20, 70), rows[0], font=_font(30), fill=(255, 255, 255))
+        y = 175
+        for ln in rows[1:]:
+            d.rectangle([20, y + 6, 60, y + 46], fill=(90, 140, 240))
+            d.text((76, y + 8), ln, font=_font(26), fill=(30, 30, 30))
+            d.text((470, y + 12), ">", font=_font(24), fill=(150, 150, 150))
+            d.line([20, y + 62, 520, y + 62], fill=(222, 222, 226))
+            y += 72
+        return im
+
+    save("15_screen_a.png", screen(
+        ["Mail", "Inbox", "Sent items", "Drafts", "Archive", "Trash",
+         "Settings", "Help centre"], (60, 120, 216)), 95)
+    save("16_screen_b.png", screen(
+        ["Mail", "STARRED", "SNOOZED", "IMPORTANT", "ALL MAIL", "SPAM",
+         "LABELS", "FILTERS"], (60, 120, 216)), 95)
+
     return paths
 
 

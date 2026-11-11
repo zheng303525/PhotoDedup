@@ -31,13 +31,16 @@ def test_tournament_leaves_one_per_group(session: Session):
         assert rec is not None
         session.delete(rec.drop)
 
-    assert len(session.deleted) == 8, f"9 张一组应该删掉 8 张，实际 {len(session.deleted)}"
+    assert session.current() is None, "队列没有收敛"
 
-    gid = 0
-    alive = [m for m in session.groups[gid].alive]
-    assert len(alive) == 1, "每组必须留一张"
-    leftover = session.result.files[alive[0]].path
-    assert leftover.exists(), "保留的那张不能被动"
+    expected = sum(max(0, g.size - 1) for g in session.result.groups)
+    assert len(session.deleted) == expected, \
+        f"每组应删到只剩一张，共 {expected} 次，实际 {len(session.deleted)}"
+
+    for gid, st in session.groups.items():
+        assert len(st.alive) == 1, f"组 {gid} 还剩 {len(st.alive)} 张，必须留一张"
+        leftover = session.result.files[st.alive[0]].path
+        assert leftover.exists(), "保留的那张不能被动"
 
 
 def test_deleted_files_move_to_staging(session: Session):

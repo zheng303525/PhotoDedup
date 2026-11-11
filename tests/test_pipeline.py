@@ -68,6 +68,63 @@ def test_flat_and_unrelated_not_grouped(scan):
         assert _group_of(scan, _by_name(scan, name)) is None, f"{name} 被误判成重复"
 
 
+def test_same_layout_different_content_not_grouped(scan):
+    """同版式不同文字的两张截图不能被并进重复组。"""
+    a = _by_name(scan, "15_screen_a.png")
+    b = _by_name(scan, "16_screen_b.png")
+    assert _group_of(scan, a) is None, "同版式不同内容的截图被并进重复组了"
+    assert _group_of(scan, b) is None
+
+
+class TestClassifyWithRealNumbers:
+    """用 928 张真实截图实测出来的判据数值做回归。
+
+    这组数字是本项目最重要的一条经验：真实副本（重压缩/缩放/小水印）的
+    「显著差异块数」是 0，而两张不同截图是 8 —— 光看总差异会和「调了亮度」混淆。
+    """
+
+    @staticmethod
+    def _geo(inliers: int, ratio: float) -> dict:
+        return {"inliers": inliers, "ratio": ratio, "matches": inliers,
+                "low_texture": False, "note": ""}
+
+    def test_true_duplicate_reencode(self):
+        from photodedup.core.verify import classify
+
+        # 同一张截图另存为 q60：块数 0，差异 0.00%
+        region = {"ratio": 0.0, "max_block": 0.0, "fill": 0.0,
+                  "blocks": 0, "invalid": False}
+        rel, _ = classify(0, True, self._geo(1868, 0.996), region)
+        assert rel == REL_NEAR
+
+    def test_true_duplicate_small_watermark(self):
+        from photodedup.core.verify import classify
+
+        region = {"ratio": 0.0, "max_block": 0.0, "fill": 0.0,
+                  "blocks": 0, "invalid": False}
+        rel, _ = classify(0, True, self._geo(1915, 0.997), region)
+        assert rel == REL_NEAR
+
+    def test_two_different_screenshots_rejected(self):
+        from photodedup.core.verify import classify
+
+        # 相隔 5 分钟的两张不同手机截图：总差异 2.81%、最大块仅 0.14%、块数 8
+        region = {"ratio": 0.0281, "max_block": 0.0014, "fill": 0.92,
+                  "blocks": 8, "invalid": False}
+        rel, note = classify(8, True, self._geo(464, 0.784), region)
+        assert rel != REL_NEAR, f"不同截图被判成 {rel}"
+        assert "处" in note
+
+    def test_burst_rejected(self):
+        from photodedup.core.verify import classify
+
+        # 同场景连拍：差异集中在 2.86% 的一块，填充率 0.79
+        region = {"ratio": 0.0571, "max_block": 0.0286, "fill": 0.788,
+                  "blocks": 1, "invalid": False}
+        rel, _ = classify(4, True, self._geo(880, 0.981), region)
+        assert rel == REL_BURST
+
+
 def test_crop_outside_default_threshold(scan):
     """已知限制：大幅裁剪让 pHash 距离超出阈值，默认抓不到。允许漏，不允许错。"""
     g = _group_of(scan, _by_name(scan, "10_crop.jpg"))

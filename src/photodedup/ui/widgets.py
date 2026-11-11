@@ -338,6 +338,8 @@ class InfoCard(QFrame):
                 bits.append(f"内点 {verdict.inliers}（{verdict.ratio:.2f}）")
             if verdict.diff_ratio:
                 bits.append(f"差异 {verdict.diff_ratio * 100:.1f}%")
+            if verdict.blocks:
+                bits.append(f"改动 {verdict.blocks} 处")
             self._rows["判据"].setText(" · ".join(bits))
         else:
             self._rows["判据"].setText("—")

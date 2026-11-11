@@ -9,6 +9,7 @@
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D4)
 ![License](https://img.shields.io/badge/license-MIT-green)
+[![CI](https://github.com/zheng303525/PhotoDedup/actions/workflows/ci.yml/badge.svg)](https://github.com/zheng303525/PhotoDedup/actions/workflows/ci.yml)
 
 ## 界面
 

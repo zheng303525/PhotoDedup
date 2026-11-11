@@ -117,6 +117,22 @@ class ComparePage(QWidget):
         self.advice = AdvicePanel()
         root.addWidget(self.advice)
 
+        # ---- 低置信候选（算法排除但可人工复核）：折叠区，默认收起 ----
+        self.btn_lowconf = QPushButton()
+        self.btn_lowconf.setCheckable(True)
+        self.btn_lowconf.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_lowconf.setStyleSheet(
+            f"text-align: left; color: {theme.TEXT_DIM}; border: none; background: transparent;")
+        self.btn_lowconf.toggled.connect(self._toggle_lowconf)
+        self.lbl_lowconf = QLabel("")
+        self.lbl_lowconf.setWordWrap(True)
+        self.lbl_lowconf.setTextFormat(Qt.TextFormat.RichText)
+        self.lbl_lowconf.setStyleSheet(f"color: {theme.TEXT_DIM};")
+        self.lbl_lowconf.hide()
+        self.btn_lowconf.hide()
+        root.addWidget(self.btn_lowconf)
+        root.addWidget(self.lbl_lowconf)
+
         hint = QLabel(HINTS)
         hint.setObjectName("Dim")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -139,7 +155,35 @@ class ComparePage(QWidget):
     def bind(self, session: Session) -> None:
         self.session = session
         self._img_cache.clear()
+        self._populate_lowconf()
         self.refresh()
+
+    # ---------- 低置信候选 ----------
+    def _populate_lowconf(self) -> None:
+        groups = self.session.result.low_confidence_groups if self.session else []
+        self.btn_lowconf.setChecked(False)
+        if not groups:
+            self.btn_lowconf.hide()
+            self.lbl_lowconf.hide()
+            return
+        self.btn_lowconf.show()
+        self._update_lowconf_text()
+        lines = []
+        for i, g in enumerate(groups, 1):
+            names = "、".join(self.session.result.files[m].name for m in g.members[:6])
+            more = f" 等 {g.size} 个" if g.size > 6 else ""
+            lines.append(f"<b>候选组 {i}</b>（{REL_LABEL.get(g.rel, g.rel)}）：{names}{more}")
+        self.lbl_lowconf.setText("<br>".join(lines))
+
+    def _toggle_lowconf(self, checked: bool) -> None:
+        self.lbl_lowconf.setVisible(checked)
+        self._update_lowconf_text()
+
+    def _update_lowconf_text(self) -> None:
+        groups = self.session.result.low_confidence_groups if self.session else []
+        arrow = "▼" if self.btn_lowconf.isChecked() else "▶"
+        self.btn_lowconf.setText(
+            f"{arrow} 已排除的低置信候选（{len(groups)} 组，未纳入逐个审阅，可展开查看）")
 
     def _load(self, path: Path) -> QImage | None:
         key = str(path)

@@ -171,6 +171,20 @@ def test_mode_switch_hides_right_pane(qtbot, session: Session):
     assert page.right["box"].isHidden(), "叠加模式下右侧应隐藏"
 
 
+def test_low_confidence_collapsible(qtbot, session: Session):
+    """低置信组折叠区：有被排除的组时显示入口，展开可看明细，收起隐藏。"""
+    page = _page(qtbot, session)
+    low = session.result.low_confidence_groups
+    assert low, "样本库里应有被排除的低置信组（连拍对）"
+    assert not page.btn_lowconf.isHidden(), "有低置信组时入口应显示"
+    assert "低置信候选" in page.btn_lowconf.text() and str(len(low)) in page.btn_lowconf.text()
+    page.btn_lowconf.setChecked(True)
+    assert not page.lbl_lowconf.isHidden(), "展开后应显示明细"
+    assert "候选组 1" in page.lbl_lowconf.text()
+    page.btn_lowconf.setChecked(False)
+    assert page.lbl_lowconf.isHidden(), "收起后应隐藏明细"
+
+
 # ---------------- 主窗口快捷键 ----------------
 
 def _window(qtbot, session: Session) -> MainWindow:

@@ -243,7 +243,8 @@ class FinishPage(QWidget):
         lay.addStretch(3)
 
     def set_summary(self, deleted: int, freed: int, groups: int, images: int,
-                    mode: str, elapsed: float, staging: Path | None) -> None:
+                    mode: str, elapsed: float, staging: Path | None,
+                    low_confidence: int = 0) -> None:
         if deleted == 0:
             body = (f"扫描了 <b>{images}</b> 张图片，找到 <b>{groups}</b> 组重复。"
                     f"本次没有删除任何文件，扫描耗时 {elapsed:.1f} 秒。")
@@ -256,6 +257,9 @@ class FinishPage(QWidget):
                        if mode == "staging" else
                        "删除的文件已进系统回收站，想找回按 <b>Z</b> 撤销，"
                        "或直接去回收站右键「还原」。"))
+        if low_confidence:
+            body += (f"<br>另有 <b>{low_confidence}</b> 组低置信候选被算法排除"
+                     f"（疑似连拍/局部重叠），未纳入逐个审阅，明细见报告。")
         self.lbl_body.setText(body)
         self.btn_cleanup.setVisible(mode == "staging" and deleted > 0)
         self.btn_open_staging.setVisible(mode == "staging" and deleted > 0)

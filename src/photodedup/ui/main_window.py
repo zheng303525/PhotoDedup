@@ -239,7 +239,8 @@ class MainWindow(QMainWindow):
             deleted=len(s.deleted), freed=freed,
             groups=s.result.stats.groups, images=s.result.stats.images,
             mode=s.mode, elapsed=s.result.stats.elapsed,
-            staging=s.staging_root)
+            staging=s.staging_root,
+            low_confidence=len(getattr(s.result, "low_confidence_groups", [])))
         if not s.result.groups:
             self.finish_page.lbl_title.setText("没有找到重复")
             self.finish_page.lbl_body.setText(
@@ -282,7 +283,8 @@ class MainWindow(QMainWindow):
             groups=self.session.result.stats.groups,
             images=self.session.result.stats.images,
             mode=self.session.mode, elapsed=self.session.result.stats.elapsed,
-            staging=self.session.staging_root)
+            staging=self.session.staging_root,
+            low_confidence=len(getattr(self.session.result, "low_confidence_groups", [])))
 
     def back_to_start(self) -> None:
         self.session = None

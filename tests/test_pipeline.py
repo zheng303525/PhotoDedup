@@ -63,6 +63,22 @@ def test_burst_not_grouped(scan):
     assert pv.rel == REL_BURST, f"连拍被判成了 {pv.rel}"
 
 
+def test_burst_pair_shows_as_low_confidence_group(scan):
+    """低置信组：被算法排除的连拍对降级展示，不再静默漏检。"""
+    from photodedup.core.models import REL_BURST as BURST
+
+    a = _by_name(scan, "11_burst_a.jpg")
+    b = _by_name(scan, "11_burst_b.jpg")
+    low = scan.low_confidence_groups
+    assert any({a, b} <= set(g.members) for g in low), \
+        f"连拍对应出现在低置信组里，实际 {[g.members for g in low]}"
+    g = next(g for g in low if {a, b} <= set(g.members))
+    assert g.rel == BURST
+    assert g.pairs, "低置信组应带着判定证据（数值留痕）"
+    # 不影响正常分组：连拍仍不进重复组
+    assert _group_of(scan, a) is None and _group_of(scan, b) is None
+
+
 def test_flat_and_unrelated_not_grouped(scan):
     for name in ("12_wall_a.jpg", "13_wall_b.jpg", "14_other.jpg"):
         assert _group_of(scan, _by_name(scan, name)) is None, f"{name} 被误判成重复"

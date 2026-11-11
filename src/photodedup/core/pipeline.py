@@ -26,7 +26,7 @@ from .hashing import fingerprints, hamming, md5_file
 from .imageio import decoded_rgb_md5, exif_score, load_rgb
 from .models import (
     ImageInfo, Group, PairVerdict, ScanStats,
-    REL_EXACT, REL_NEAR, REL_SAME_PIXEL,
+    REL_BURST, REL_EXACT, REL_NEAR, REL_SAME_PIXEL, REL_WEAK,
 )
 from .verify import (
     DEF_MAX_BLOCK, DEF_MAX_BLOCKS, DEF_MAX_DIFF, DEF_MAX_FILL,
@@ -96,6 +96,7 @@ class ScanResult:
     root: Path
     files: list[ImageInfo] = field(default_factory=list)
     groups: list[Group] = field(default_factory=list)
+    low_confidence_groups: list[Group] = field(default_factory=list)
     edges: dict[tuple[int, int], PairVerdict] = field(default_factory=dict)
     stats: ScanStats = field(default_factory=ScanStats)
     warnings: list[str] = field(default_factory=list)
@@ -525,6 +526,24 @@ class Pipeline:
 
         groups.sort(key=lambda g: (-g.size, -reclaim(g)))
         result.groups = groups
+
+        # ---------- 低置信组：被算法排除但可人工复核（连拍/局部重叠） ----------
+        # 这些边有几何证据（数值都留着），只是没通过阈值；静默丢弃就是「漏检」——
+        # 降级展示给用户，宁漏改成可查，同时保住「不同截图」的防误判标定。
+        reviewable = [(e.a, e.b) for e in edges.values()
+                      if not e.accepted and e.rel in (REL_BURST, REL_WEAK)]
+        if reviewable:
+            low_raw = collect_groups(len(result.files), reviewable)
+            low_groups: list[Group] = []
+            for members in low_raw:
+                pairs = [e for k, e in edges.items()
+                         if k[0] in members and k[1] in members
+                         and not e.accepted and e.rel in (REL_BURST, REL_WEAK)]
+                weakest = REL_WEAK if any(p.rel == REL_WEAK for p in pairs) else REL_BURST
+                low_groups.append(Group(members=list(members), rel=weakest, pairs=pairs))
+            low_groups.sort(key=lambda g: -g.size)
+            result.low_confidence_groups = low_groups
+
         result.edges = edges
         result.stats.groups = len(groups)
         result.stats.duplicated = sum(max(0, g.size - 1) for g in groups)

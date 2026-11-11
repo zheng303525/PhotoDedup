@@ -91,6 +91,15 @@ def test_report_written(session: Session):
     assert "去重报告" in text and "已删除的文件" in text
 
 
+def test_report_includes_low_confidence_groups(session: Session):
+    """报告里有低置信候选明细（决策可追溯）。"""
+    rec = session.advice()
+    session.delete(rec.drop)
+    md, _csv = session.write_report(session.result.root)
+    text = md.read_text(encoding="utf-8")
+    assert "低置信候选" in text, "报告应包含低置信候选章节"
+
+
 # ---------------- 默认模式：系统回收站 ----------------
 
 def test_default_mode_is_trash():

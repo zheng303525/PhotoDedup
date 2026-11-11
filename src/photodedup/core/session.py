@@ -375,6 +375,17 @@ class Session:
         if not pending:
             lines.append("- 无，全部处理完毕")
 
+        lines += ["", "## 低置信候选（被算法排除，未纳入审阅）", "",
+                  "这些对有几何证据但没通过阈值（疑似连拍/局部重叠），"
+                  "如确信是重复请手动处理。", ""]
+        low = getattr(self.result, "low_confidence_groups", [])
+        for i, g in enumerate(low, 1):
+            names = "、".join(f"`{self.result.files[m].name}`" for m in g.members[:6])
+            more = f" 等 {g.size} 个" if g.size > 6 else ""
+            lines.append(f"- 组 {i}（{REL_LABEL.get(g.rel, g.rel)}）：{names}{more}")
+        if not low:
+            lines.append("- 无")
+
         md_path.write_text("\n".join(lines), encoding="utf-8")
 
         with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
